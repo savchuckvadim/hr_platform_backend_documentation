@@ -1,0 +1,495 @@
+// Use DBML to define your database structure
+// Docs: https://dbml.dbdiagram.io/docs
+// HR Platform Database Schema
+
+// ============================================
+// User & Authentication
+// ============================================
+
+Table users {
+  id varchar [primary key, note: 'UUID']
+  email varchar(255) [unique, note: 'Unique email for authentication']
+  password varchar [note: 'Hashed password']
+  is_activated boolean [default: false]
+  activation_link varchar(255) [unique, null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    email
+  }
+}
+
+Table user_roles {
+  id varchar [primary key, note: 'UUID']
+  name varchar(50) [unique, not null, note: 'CANDIDATE | EMPLOYER | ADMIN - системные роли']
+  slug varchar(50) [unique, not null]
+  description text [null]
+  is_active boolean [default: true]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    name
+    slug
+    is_active
+  }
+}
+
+Table hr_roles {
+  id varchar [primary key, note: 'UUID']
+  name varchar(50) [unique, not null, note: 'HR | HR_ADMIN - роли внутри компании']
+  slug varchar(50) [unique, not null]
+  description text [null]
+  permissions json [null, note: 'JSON с правами доступа для будущего расширения']
+  is_active boolean [default: true]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    name
+    slug
+    is_active
+  }
+}
+
+Table role_contexts {
+  id varchar [primary key, note: 'UUID']
+  user_id varchar [not null]
+  user_role_id varchar [not null, note: 'FK to user_roles - системная роль (CANDIDATE | EMPLOYER | ADMIN)']
+  company_id varchar [null, note: 'For EMPLOYER role - company they belong to. Required for EMPLOYER roles']
+  hr_role_id varchar [null, note: 'FK to hr_roles - роль HR внутри компании (HR | HR_ADMIN) - только для EMPLOYER']
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    user_id
+    user_role_id
+    company_id
+    hr_role_id
+  }
+}
+
+Table company_types {
+  id varchar [primary key, note: 'UUID']
+  name varchar(100) [unique, not null, note: 'ORGANIZATION | IP | LAWYER | SELF_EMPLOYED | OTHER']
+  slug varchar(100) [unique, not null]
+  description text [null]
+  is_active boolean [default: true]
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    name
+    slug
+    is_active
+  }
+}
+
+Table companies {
+  id varchar [primary key, note: 'UUID']
+  name varchar(255) [not null]
+  inn varchar(20) [null, note: 'Tax identification number']
+  company_type_id varchar [not null, note: 'FK to company_types - позволяет добавлять новые типы без миграции']
+  owner_id varchar [not null, note: 'User who created company (EMPLOYER with HR_ADMIN role)']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    owner_id
+    inn
+    company_type_id
+  }
+}
+
+Table tokens {
+  id varchar [primary key, note: 'UUID']
+  user_id varchar [not null]
+  role_context_id varchar [not null, note: 'Active role context for this token']
+  refresh_token varchar(500) [unique, note: 'Hashed refresh token']
+  device_id varchar(255) [not null, note: 'Unique device identifier']
+  device_name varchar(255) [null]
+  user_agent text [null]
+  ip_address varchar(45) [null]
+  expires_at timestamp [not null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    user_id
+    role_context_id
+    refresh_token
+    device_id
+    expires_at
+    (user_id, role_context_id, device_id) [unique, note: 'One token per user+role+device']
+  }
+}
+
+// ============================================
+// Profiles
+// ============================================
+
+Table candidate_profiles {
+  id varchar [primary key, note: 'UUID']
+  user_id varchar [unique, not null]
+  first_name varchar(100) [null]
+  last_name varchar(100) [null]
+  middle_name varchar(100) [null]
+  birthday timestamp [null]
+  phone varchar(20) [null]
+  contact_email varchar(255) [null]
+  contact_phone varchar(20) [null]
+  avatar varchar(500) [null]
+  bio text [null]
+  location varchar(255) [null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    user_id
+  }
+}
+
+// DEPRECATED: employer_profiles больше не используется
+// Вся информация о компании хранится в таблице companies
+// Владелец компании = User с RoleContext (EMPLOYER, HR_ADMIN)
+// Оставлено для обратной совместимости, но не должно использоваться в новой архитектуре
+
+// ============================================
+// Resumes
+// ============================================
+
+Table resumes {
+  id varchar [primary key, note: 'UUID']
+  candidate_id varchar [not null]
+  title varchar(255) [not null]
+  position varchar(255) [null]
+  salary_min integer [null]
+  salary_max integer [null]
+  currency varchar(3) [default: 'RUB']
+  contact_email varchar(255) [null, note: 'Optional override from profile']
+  contact_phone varchar(20) [null, note: 'Optional override from profile']
+  summary text [null]
+  is_active boolean [default: true]
+  is_public boolean [default: false]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    candidate_id
+    is_active
+    is_public
+  }
+}
+
+Table resume_versions {
+  id varchar [primary key, note: 'UUID']
+  resume_id varchar [not null]
+  version integer [default: 1]
+  data json [note: 'JSON snapshot of resume at version']
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    resume_id
+    (resume_id, version) [unique]
+  }
+}
+
+Table experiences {
+  id varchar [primary key, note: 'UUID']
+  resume_id varchar [not null]
+  company varchar(255) [not null]
+  position varchar(255) [not null]
+  description text [null]
+  start_date timestamp [not null]
+  end_date timestamp [null]
+  is_current boolean [default: false]
+  location varchar(255) [null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    resume_id
+    company
+    position
+  }
+}
+
+Table educations {
+  id varchar [primary key, note: 'UUID']
+  resume_id varchar [not null]
+  institution varchar(255) [not null]
+  degree varchar(255) [null]
+  field varchar(255) [null]
+  start_date timestamp [null]
+  end_date timestamp [null]
+  description text [null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    resume_id
+    institution
+    degree
+  }
+}
+
+// ============================================
+// Projects & Vacancies
+// ============================================
+
+Table projects {
+  id varchar [primary key, note: 'UUID']
+  company_id varchar [not null, note: 'FK to companies - проект принадлежит компании']
+  name varchar(255) [not null, note: 'Название проекта (например: Шаурмечная, Кофейня)']
+  description text [null]
+  is_active boolean [default: true]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    company_id
+    is_active
+  }
+}
+
+Table vacancies {
+  id varchar [primary key, note: 'UUID']
+  project_id varchar [not null, note: 'FK to projects - вакансия привязана к проекту компании']
+  title varchar(255) [not null]
+  description text [not null]
+  position varchar(255) [null]
+  salary_min integer [null]
+  salary_max integer [null]
+  currency varchar(3) [default: 'RUB']
+  location varchar(255) [null]
+  work_type varchar [default: 'FULL_TIME', note: 'FULL_TIME | PART_TIME | CONTRACT | INTERNSHIP | REMOTE | HYBRID']
+  employment_type varchar [default: 'PERMANENT', note: 'PERMANENT | TEMPORARY | CONTRACT | INTERNSHIP']
+  is_active boolean [default: true]
+  is_public boolean [default: true]
+  expires_at timestamp [null]
+  views_count integer [default: 0]
+  applications_count integer [default: 0]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    project_id
+    is_active
+    is_public
+    work_type
+    employment_type
+    expires_at
+  }
+}
+
+// ============================================
+// Applications
+// ============================================
+
+Table applications {
+  id varchar [primary key, note: 'UUID']
+  candidate_id varchar [not null]
+  vacancy_id varchar [not null]
+  resume_id varchar [null]
+  resume_version_id varchar [null]
+  status varchar [default: 'NEW', note: 'NEW | VIEWED | INVITED | REJECTED | ACCEPTED | WITHDRAWN']
+  cover_letter text [null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  Note: 'Unique constraint: (candidate_id, vacancy_id) - One application per candidate per vacancy'
+
+  indexes {
+    candidate_id
+    vacancy_id
+    status
+    created_at
+    (candidate_id, vacancy_id) [unique]
+  }
+}
+
+// ============================================
+// Skills
+// ============================================
+
+Table skills {
+  id varchar [primary key, note: 'UUID']
+  name varchar(100) [unique, not null]
+  slug varchar(100) [unique, not null]
+  category varchar(50) [null]
+  description text [null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    name
+    slug
+    category
+  }
+}
+
+Table resume_skills {
+  id varchar [primary key, note: 'UUID']
+  resume_id varchar [not null]
+  skill_id varchar [not null]
+  level varchar [null, note: 'BASIC | INTERMEDIATE | ADVANCED | EXPERT']
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    resume_id
+    skill_id
+    (resume_id, skill_id) [unique]
+  }
+}
+
+Table vacancy_skills {
+  id varchar [primary key, note: 'UUID']
+  vacancy_id varchar [not null]
+  skill_id varchar [not null]
+  is_required boolean [default: false]
+  level varchar [null, note: 'BASIC | INTERMEDIATE | ADVANCED | EXPERT']
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    vacancy_id
+    skill_id
+    (vacancy_id, skill_id) [unique]
+  }
+}
+
+// ============================================
+// Chat & Messages
+// ============================================
+
+Table chats {
+  id varchar [primary key, note: 'UUID']
+  application_id varchar [unique, null]
+  type varchar [default: 'DIRECT', note: 'DIRECT | APPLICATION | GROUP']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    application_id
+    type
+  }
+}
+
+Table chat_members {
+  id varchar [primary key, note: 'UUID']
+  chat_id varchar [not null]
+  user_id varchar [not null]
+  role varchar [default: 'MEMBER', note: 'MEMBER | ADMIN | OWNER']
+  joined_at timestamp [default: `now()`]
+  left_at timestamp [null]
+  last_read_at timestamp [null]
+
+  indexes {
+    chat_id
+    user_id
+    (chat_id, user_id) [unique]
+  }
+}
+
+Table messages {
+  id varchar [primary key, note: 'UUID']
+  chat_id varchar [not null]
+  user_id varchar [not null]
+  content text [not null]
+  type varchar [default: 'TEXT', note: 'TEXT | IMAGE | FILE | SYSTEM']
+  file_id varchar [null]
+  reply_to_id varchar [null]
+  is_edited boolean [default: false]
+  is_deleted boolean [default: false]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    chat_id
+    user_id
+    created_at
+  }
+}
+
+// ============================================
+// Files
+// ============================================
+
+Table files {
+  id varchar [primary key, note: 'UUID']
+  user_id varchar [not null]
+  name varchar(255) [not null]
+  original_name varchar(255) [not null]
+  mime_type varchar(100) [not null]
+  size integer [not null]
+  url varchar(500) [not null]
+  s3_key varchar(500) [not null]
+  type varchar [not null, note: 'RESUME | DOCUMENT | AVATAR | IMAGE | VACANCY_IMAGE']
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    user_id
+    type
+    created_at
+  }
+}
+
+
+// ============================================
+// Relationships
+// ============================================
+
+// User relationships
+Ref: role_contexts.user_id > users.id [delete: cascade]
+Ref: role_contexts.user_role_id > user_roles.id [delete: restrict]
+Ref: role_contexts.hr_role_id > hr_roles.id [delete: set null]
+Ref: tokens.user_id > users.id [delete: cascade]
+Ref: tokens.role_context_id > role_contexts.id [delete: cascade]
+Ref: candidate_profiles.user_id > users.id [delete: cascade]
+// DEPRECATED: employer_profiles больше не используется
+Ref: chat_members.user_id > users.id [delete: cascade]
+Ref: messages.user_id > users.id [delete: cascade]
+Ref: files.user_id > users.id [delete: cascade]
+Ref: applications.candidate_id > users.id [delete: cascade]
+// Note: ApplicationCandidate relation
+
+// Company relationships
+Ref: companies.owner_id > users.id [delete: cascade]
+// Note: Нельзя удалить тип компании если есть компании этого типа
+Ref: companies.company_type_id > company_types.id [delete: restrict]
+Ref: role_contexts.company_id > companies.id [delete: set null]
+// Note: EMPLOYER roles belong to company
+
+// Profile relationships
+Ref: resumes.candidate_id > candidate_profiles.id [delete: cascade]
+
+// Resume relationships
+Ref: resume_versions.resume_id > resumes.id [delete: cascade]
+Ref: experiences.resume_id > resumes.id [delete: cascade]
+Ref: educations.resume_id > resumes.id [delete: cascade]
+Ref: resume_skills.resume_id > resumes.id [delete: cascade]
+Ref: applications.resume_id > resumes.id [delete: set null]
+Ref: applications.resume_version_id > resume_versions.id [delete: set null]
+
+// Project & Vacancy relationships
+Ref: projects.company_id > companies.id [delete: cascade]
+Ref: vacancies.project_id > projects.id [delete: cascade]
+Ref: applications.vacancy_id > vacancies.id [delete: cascade]
+Ref: vacancy_skills.vacancy_id > vacancies.id [delete: cascade]
+
+// Skill relationships
+Ref: resume_skills.skill_id > skills.id [delete: cascade]
+Ref: vacancy_skills.skill_id > skills.id [delete: cascade]
+
+// Application relationships
+Ref: chats.application_id > applications.id [delete: cascade]
+// Note: Application -> Company relationship is via vacancy.project_id -> projects.company_id -> companies.id
+
+// Chat relationships
+Ref: chat_members.chat_id > chats.id [delete: cascade]
+Ref: messages.chat_id > chats.id [delete: cascade]
+
+// Message relationships
+Ref: messages.file_id > files.id [delete: set null]
+Ref: messages.reply_to_id > messages.id [delete: set null]
+// Note: Self-referencing for message replies
+
+// Unique constraints are defined in table indexes above
