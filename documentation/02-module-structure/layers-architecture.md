@@ -696,4 +696,4 @@ async handleUserCreated(payload) {
 - [Core Events Module](../../21-events/index.md) - централизованная система событий
 - [Queue Processors](../../08-queue/queue-processors.md) - обработчики очередей
 - [Тестирование модулей](./testing.md) - принципы тестирования
-- [Создание нового модуля](./module-template.md) - шаблон модуля
+- [Зависимости между слоями](./dependencies.md) - правила и принципы зависимостей
