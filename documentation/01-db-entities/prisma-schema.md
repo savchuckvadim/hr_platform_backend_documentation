@@ -25,6 +25,8 @@ model User {
   activationLink String?   @unique @db.VarChar(255)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+  createdBy      String?   @map("created_by")
+  updatedBy      String?   @map("updated_by")
 
   // Relations
   tokens            Token[]
@@ -34,11 +36,19 @@ model User {
   chats             ChatMember[]
   messages          Message[]
   files             File[]
-  sentApplications  Application[]      @relation("ApplicationCandidate")
+  sentReplies       Reply[]            @relation("ReplyCandidate")
   ownedCompanies    Company[]          // Компании, где user = owner (EMPLOYER с HR_ADMIN)
+  // Self-referencing for created_by/updated_by
+  createdUsers      User[]             @relation("UserCreatedBy")
+  updatedUsers      User[]             @relation("UserUpdatedBy")
+
+  createdByUser     User?              @relation("UserCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser     User?              @relation("UserUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("users")
   @@index([email])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 
 // DEPRECATED: UserRole больше не используется
@@ -114,12 +124,18 @@ model CandidateProfile {
   location    String?   @db.VarChar(255)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  createdBy   String?   @map("created_by")
+  updatedBy   String?   @map("updated_by")
 
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  resumes Resume[]
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumes      Resume[]
+  createdByUser User?   @relation("CandidateProfileCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User?   @relation("CandidateProfileUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("candidate_profiles")
   @@index([userId])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 ```
 
@@ -142,13 +158,19 @@ model UserRole {
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  createdBy   String?   @map("created_by")
+  updatedBy   String?   @map("updated_by")
 
   roleContexts RoleContext[]
+  createdByUser User?   @relation("UserRoleCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User?   @relation("UserRoleUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("user_roles")
   @@index([name])
   @@index([slug])
   @@index([isActive])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 ```
 
@@ -173,13 +195,19 @@ model HrRole {
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  createdBy   String?   @map("created_by")
+  updatedBy   String?   @map("updated_by")
 
   roleContexts RoleContext[]
+  createdByUser User?   @relation("HrRoleCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User?   @relation("HrRoleUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("hr_roles")
   @@index([name])
   @@index([slug])
   @@index([isActive])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 ```
 
@@ -203,18 +231,21 @@ model RoleContext {
   companyId   String?   @map("company_id") // Обязательно для EMPLOYER
   hrRoleId    String?    @map("hr_role_id") // FK к hr_roles (HR | HR_ADMIN) - только для EMPLOYER
   createdAt   DateTime  @default(now())
+  createdBy   String?   @map("created_by")
 
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userRole UserRole @relation(fields: [userRoleId], references: [id], onDelete: Restrict)
-  company  Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  hrRole   HrRole?  @relation(fields: [hrRoleId], references: [id], onDelete: SetNull)
-  tokens   Token[]
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userRole    UserRole @relation(fields: [userRoleId], references: [id], onDelete: Restrict)
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  hrRole      HrRole?  @relation(fields: [hrRoleId], references: [id], onDelete: SetNull)
+  tokens      Token[]
+  createdByUser User?  @relation("RoleContextCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@map("role_contexts")
   @@index([userId])
   @@index([userRoleId])
   @@index([companyId])
   @@index([hrRoleId])
+  @@index([createdBy])
 }
 ```
 
@@ -238,12 +269,19 @@ model CompanyType {
   description String?   @db.Text
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdBy   String?   @map("created_by")
+  updatedBy   String?   @map("updated_by")
 
   companies   Company[]
+  createdByUser User?   @relation("CompanyTypeCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User?   @relation("CompanyTypeUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("company_types")
   @@index([name])
   @@index([slug])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 ```
 
@@ -260,16 +298,23 @@ model Company {
   ownerId       String        @map("owner_id") // User (HR с HR_ADMIN)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+  createdBy     String?       @map("created_by")
+  updatedBy     String?       @map("updated_by")
 
   companyType   CompanyType   @relation(fields: [companyTypeId], references: [id], onDelete: Restrict)
   owner         User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   roleContexts  RoleContext[] // HR сотрудники компании
   projects      Project[]
+  experiences   Experience[]  // Опыт работы в этой компании
+  createdByUser User?         @relation("CompanyCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User?         @relation("CompanyUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("companies")
   @@index([ownerId])
   @@index([inn])
   @@index([companyTypeId])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 ```
 
@@ -291,13 +336,19 @@ model Project {
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  createdBy   String?   @map("created_by")
+  updatedBy   String?   @map("updated_by")
 
-  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  vacancies Vacancy[]
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  vacancies   Vacancy[]
+  createdByUser User?   @relation("ProjectCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User?   @relation("ProjectUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("projects")
   @@index([companyId])
   @@index([isActive])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 ```
 
@@ -335,18 +386,24 @@ model Resume {
   isPublic     Boolean   @default(false) @map("is_public")
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+  createdBy    String?   @map("created_by")
+  updatedBy    String?   @map("updated_by")
 
   candidate      CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   skills         ResumeSkill[]
   experiences    Experience[]
   educations     Education[]
-  applications   Application[]
+  replies        Reply[]
   resumeVersions ResumeVersion[]
+  createdByUser  User?           @relation("ResumeCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser   User?           @relation("ResumeUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("resumes")
   @@index([candidateId])
   @@index([isActive])
   @@index([isPublic])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 ```
 
@@ -368,12 +425,15 @@ model ResumeVersion {
   version   Int      @default(1)
   data      Json     // JSON snapshot резюме на момент версии
   createdAt DateTime @default(now())
+  createdBy String?  @map("created_by")
 
-  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  resume        Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  createdByUser User?  @relation("ResumeVersionCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@unique([resumeId, version])
   @@map("resume_versions")
   @@index([resumeId])
+  @@index([createdBy])
 }
 ```
 
@@ -391,6 +451,7 @@ model Experience {
   id          String    @id @default(uuid())
   resumeId    String    @map("resume_id")
   company     String    @db.VarChar(255)
+  companyId   String?   @map("company_id") // FK to companies - связь с компанией в системе (опционально)
   position    String    @db.VarChar(255)
   description String?   @db.Text
   startDate   DateTime  @map("start_date")
@@ -399,13 +460,21 @@ model Experience {
   location    String?   @db.VarChar(255)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  createdBy   String?   @map("created_by")
+  updatedBy   String?   @map("updated_by")
 
-  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  resume  Resume   @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  companyRelation Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  createdByUser   User?    @relation("ExperienceCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser   User?    @relation("ExperienceUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("experiences")
   @@index([resumeId])
   @@index([company])
+  @@index([companyId])
   @@index([position])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 ```
 
@@ -430,13 +499,19 @@ model Education {
   description String?   @db.Text
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  createdBy   String?   @map("created_by")
+  updatedBy   String?   @map("updated_by")
 
-  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  resume       Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  createdByUser User? @relation("EducationCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User? @relation("EducationUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("educations")
   @@index([resumeId])
   @@index([institution])
   @@index([degree])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 ```
 
@@ -451,7 +526,7 @@ model Education {
 ```prisma
 model Vacancy {
   id              String    @id @default(uuid())
-  projectId       String    @map("project_id")
+  projectId       String?   @map("project_id") // Необязательно - вакансия может существовать без проекта
   title           String    @db.VarChar(255)
   description     String    @db.Text
   position        String?   @db.VarChar(255)
@@ -465,13 +540,17 @@ model Vacancy {
   isPublic        Boolean   @default(true) @map("is_public")
   expiresAt       DateTime? @map("expires_at")
   viewsCount      Int       @default(0) @map("views_count")
-  applicationsCount Int     @default(0) @map("applications_count")
+  repliesCount    Int       @default(0) @map("replies_count") // Renamed from applications_count
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+  createdBy       String?   @map("created_by")
+  updatedBy       String?   @map("updated_by")
 
-  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
   skills      VacancySkill[]
-  applications Application[]
+  replies     Reply[]
+  createdByUser User?   @relation("VacancyCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User?   @relation("VacancyUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("vacancies")
   @@index([projectId])
@@ -480,6 +559,8 @@ model Vacancy {
   @@index([workType])
   @@index([employmentType])
   @@index([expiresAt])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 
 enum WorkType {
@@ -506,38 +587,44 @@ enum EmploymentType {
 - `expiresAt` - срок действия вакансии
 - Счетчики для статистики
 
-### 15. Application - Отклик
+### 15. Reply - Отклик (бывший Application)
 
-Отклик кандидата на вакансию. Центральная сущность для взаимодействия.
+Отклик кандидата на вакансию. Центральная сущность для взаимодействия. Переименован из Application в Reply.
 
 ```prisma
-model Application {
-  id              String            @id @default(uuid())
-  candidateId     String            @map("candidate_id")
-  vacancyId       String            @map("vacancy_id")
-  resumeId        String?           @map("resume_id")
-  resumeVersionId String?           @map("resume_version_id")
-  status          ApplicationStatus  @default(NEW)
-  coverLetter     String?           @map("cover_letter") @db.Text
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
+model Reply {
+  id              String        @id @default(uuid())
+  candidateId     String        @map("candidate_id")
+  vacancyId       String        @map("vacancy_id")
+  resumeId        String?       @map("resume_id")
+  resumeVersionId String?       @map("resume_version_id")
+  status          ReplyStatus   @default(NEW)
+  coverLetter     String?       @map("cover_letter") @db.Text
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  createdBy       String?       @map("created_by")
+  updatedBy       String?       @map("updated_by")
 
-  candidate      User              @relation("ApplicationCandidate", fields: [candidateId], references: [id], onDelete: Cascade)
+  candidate      User          @relation("ReplyCandidate", fields: [candidateId], references: [id], onDelete: Cascade)
   // Связь с компанией через vacancy.project.company
-  vacancy        Vacancy           @relation(fields: [vacancyId], references: [id], onDelete: Cascade)
-  resume         Resume?           @relation(fields: [resumeId], references: [id], onDelete: SetNull)
-  resumeVersion  ResumeVersion?    @relation(fields: [resumeVersionId], references: [id], onDelete: SetNull)
+  vacancy        Vacancy       @relation(fields: [vacancyId], references: [id], onDelete: Cascade)
+  resume         Resume?       @relation(fields: [resumeId], references: [id], onDelete: SetNull)
+  resumeVersion  ResumeVersion? @relation(fields: [resumeVersionId], references: [id], onDelete: SetNull)
   chat           Chat?
+  createdByUser  User?         @relation("ReplyCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser  User?         @relation("ReplyUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@unique([candidateId, vacancyId])
-  @@map("applications")
+  @@map("replies")
   @@index([candidateId])
   @@index([vacancyId])
   @@index([status])
   @@index([createdAt])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 
-enum ApplicationStatus {
+enum ReplyStatus {
   NEW           // Новый отклик
   VIEWED        // Просмотрен работодателем
   INVITED       // Приглашен на собеседование
@@ -569,14 +656,20 @@ model Skill {
   description String?  @db.Text
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  createdBy   String?  @map("created_by")
+  updatedBy   String?  @map("updated_by")
 
   resumeSkills ResumeSkill[]
   vacancySkills VacancySkill[]
+  createdByUser User?  @relation("SkillCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User?  @relation("SkillUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("skills")
   @@index([name])
   @@index([slug])
   @@index([category])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 ```
 
@@ -597,14 +690,17 @@ model ResumeSkill {
   skillId   String   @map("skill_id")
   level     SkillLevel? @default(BASIC)
   createdAt DateTime @default(now())
+  createdBy String?  @map("created_by")
 
-  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
-  skill  Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  resume       Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  skill        Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  createdByUser User? @relation("ResumeSkillCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@unique([resumeId, skillId])
   @@map("resume_skills")
   @@index([resumeId])
   @@index([skillId])
+  @@index([createdBy])
 }
 
 enum SkillLevel {
@@ -632,14 +728,17 @@ model VacancySkill {
   isRequired Boolean @default(false) @map("is_required")
   level     SkillLevel?
   createdAt DateTime @default(now())
+  createdBy String?  @map("created_by")
 
-  vacancy Vacancy @relation(fields: [vacancyId], references: [id], onDelete: Cascade)
-  skill   Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  vacancy       Vacancy @relation(fields: [vacancyId], references: [id], onDelete: Cascade)
+  skill         Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  createdByUser User?   @relation("VacancySkillCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@unique([vacancyId, skillId])
   @@map("vacancy_skills")
   @@index([vacancyId])
   @@index([skillId])
+  @@index([createdBy])
 }
 ```
 
@@ -655,18 +754,24 @@ model VacancySkill {
 ```prisma
 model Chat {
   id            String    @id @default(uuid())
-  applicationId String?   @unique @map("application_id")
+  replyId       String?   @unique @map("reply_id") // Renamed from applicationId
   type          ChatType  @default(DIRECT)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  createdBy     String?   @map("created_by")
+  updatedBy     String?   @map("updated_by")
 
-  application Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  members     ChatMember[]
-  messages    Message[]
+  reply     Reply?       @relation(fields: [replyId], references: [id], onDelete: Cascade)
+  members   ChatMember[]
+  messages  Message[]
+  createdByUser User?    @relation("ChatCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User?    @relation("ChatUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("chats")
-  @@index([applicationId])
+  @@index([replyId])
   @@index([type])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 
 enum ChatType {
@@ -677,7 +782,7 @@ enum ChatType {
 ```
 
 **Принципы:**
-- Чат может быть привязан к Application
+- Чат может быть привязан к Reply (бывший Application)
 - Или прямой чат между пользователями
 - `type` для различных типов чатов
 
@@ -733,17 +838,23 @@ model Message {
   isDeleted Boolean     @default(false) @map("is_deleted")
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
+  createdBy String?     @map("created_by")
+  updatedBy  String?     @map("updated_by")
 
-  chat    Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  file    File?    @relation(fields: [fileId], references: [id], onDelete: SetNull)
-  replyTo Message? @relation("MessageReply", fields: [replyToId], references: [id], onDelete: SetNull)
-  replies Message[] @relation("MessageReply")
+  chat         Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  file         File?    @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  replyTo      Message? @relation("MessageReply", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies      Message[] @relation("MessageReply")
+  createdByUser User?    @relation("MessageCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User?    @relation("MessageUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("messages")
   @@index([chatId])
   @@index([userId])
   @@index([createdAt])
+  @@index([createdBy])
+  @@index([updatedBy])
 }
 
 enum MessageType {
@@ -776,14 +887,17 @@ model File {
   s3Key       String    @map("s3_key") @db.VarChar(500)
   type        FileType
   createdAt   DateTime  @default(now())
+  createdBy   String?   @map("created_by")
 
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messages Message[]
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages     Message[]
+  createdByUser User?    @relation("FileCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@map("files")
   @@index([userId])
   @@index([type])
   @@index([createdAt])
+  @@index([createdBy])
 }
 
 enum FileType {
@@ -811,7 +925,7 @@ enum FileType {
 @@index([email])
 @@index([role])
 
-// Application
+// Reply (formerly Application)
 @@index([candidateId])
 @@index([vacancyId])
 @@index([status])
@@ -853,7 +967,7 @@ npx prisma migrate deploy
 
 ## Примечания по реализации
 
-1. **Версионирование резюме**: Структура заложена, но на MVP не используется. Можно добавить `resumeVersionId` в Application для истории.
+1. **Версионирование резюме**: Структура заложена, но на MVP не используется. Можно добавить `resumeVersionId` в Reply для истории.
 
 2. **Лимит откликов**: Логика 10 откликов/день реализуется в сервисе, не на уровне БД.
 

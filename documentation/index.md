@@ -110,7 +110,7 @@ src/
 │   ├── companies/             # Модуль компаний
 │   ├── vacancies/              # Модуль вакансий
 │   ├── resumes/                # Модуль резюме
-│   ├── applications/           # Модуль откликов
+│   ├── replies/                # Модуль откликов (бывший applications)
 │   ├── chat/                   # Модуль чата
 │   ├── presence/               # Модуль присутствия
 │   └── mail/                   # Модуль отправки email
@@ -223,7 +223,7 @@ src/
 2. **[Структура модуля - луковая архитектура](./02-module-structure/index.md)** - организация модулей, слои, принципы
 3. **[Response Filters, Interceptors & Middleware](./03-response-filters/index.md)** - стандартизация API ответов, обработка ошибок, логирование
 4. **[Authentication](./04-authentication/index.md)** - JWT, Passport, multi-device tokens, multi-role context, guards, decorators, registration, login, refresh flows
-5. **[Chat Module](./chat/index.md)** - модуль чата для общения между кандидатами и компаниями (DIRECT, APPLICATION, GROUP чаты)
+5. **[Chat Module](./13-chat/index.md)** - модуль чата для общения между кандидатами и компаниями (DIRECT, APPLICATION, GROUP чаты)
 6. **[Модуль присутствия](./11-presence/index.md)** - отслеживание онлайн/офлайн статусов
 7. **[Модуль Mail](./12-mail/index.md)** - отправка email с React компонентами
 
@@ -235,7 +235,7 @@ src/
 11. **[Принципы работы с Queue](./08-queue/index.md)** - работа с очередями задач (BullMQ) (core/queue)
 12. **[Логирование и метрики](./09-logging-metrics/index.md)** - Grafana Loki, Promtail, Prometheus (core/metrics)
 13. **[Хранение файлов - Storage](./10-storage/index.md)** - модуль хранения файлов через AWS S3 (core/storage + core/s3)
-14. **[Core Events Module](./15-events/index.md)** - централизованная система событий с типизацией (core/events)
+14. **[Core Events Module](./21-events/index.md)** - централизованная система событий с типизацией (core/events)
 15. **[Core Prisma](./16-prisma/index.md)** - Prisma сервис и модуль (core/prisma)
 16. **[Core Redis](./17-redis/index.md)** - Redis сервис и модуль (core/redis)
 17. **[Core Decorators](./18-core-decorators/index.md)** - переиспользуемые декораторы (core/decorators)

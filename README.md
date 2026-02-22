@@ -152,7 +152,7 @@ HR Platform — это современная платформа для поис
 - [Принципы работы с Queue](./documentation/08-queue/index.md)
 - [Логирование и метрики](./documentation/09-logging-metrics/index.md)
 - [Хранение файлов - Storage](./documentation/10-storage/index.md)
-- [Chat Module](./documentation/chat/index.md)
+- [Chat Module](./documentation/13-chat/index.md)
 - [Модуль присутствия](./documentation/11-presence/index.md)
 - [Модуль Mail](./documentation/12-mail/index.md)
 - И другие...

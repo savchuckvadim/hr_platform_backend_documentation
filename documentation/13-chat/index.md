@@ -105,7 +105,7 @@ messages/
 - **Real-time** - доставка через WebSocket
 - **Read Status** - отслеживание прочитанных сообщений
 - **Company Chat** - от root HR или нанятого HR
-- **Application Chat** - автоматическое создание при отклике
+- **Application Chat** - автоматическое создание при отклике (связан с Reply)
 
 ## Модель данных
 
@@ -114,23 +114,25 @@ messages/
 ```prisma
 model Chat {
   id            String    @id @default(uuid())
-  applicationId String?   @unique @map("application_id")
+  replyId       String?   @unique @map("reply_id") // Renamed from applicationId
   type          ChatType  @default(DIRECT)
   name          String?   @db.VarChar(255)
   description   String?   @db.Text
   avatar        String?   @db.VarChar(500)
-  createdBy     String    @map("created_by")
+  createdBy     String?   @map("created_by")
+  updatedBy     String?   @map("updated_by")
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  application Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  reply     Reply?        @relation(fields: [replyId], references: [id], onDelete: Cascade)
   members     ChatMember[]
   messages    Message[]
 
   @@map("chats")
-  @@index([applicationId])
+  @@index([replyId])
   @@index([type])
   @@index([createdBy])
+  @@index([updatedBy])
 }
 
 enum ChatType {

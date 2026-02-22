@@ -14,9 +14,13 @@ Table users {
   activation_link varchar(255) [unique, null]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this user (for admin actions)']
+  updated_by varchar [null, note: 'FK to users.id - who last updated this user']
 
   indexes {
     email
+    created_by
+    updated_by
   }
 }
 
@@ -28,11 +32,15 @@ Table user_roles {
   is_active boolean [default: true]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id']
+  updated_by varchar [null, note: 'FK to users.id']
 
   indexes {
     name
     slug
     is_active
+    created_by
+    updated_by
   }
 }
 
@@ -45,11 +53,15 @@ Table hr_roles {
   is_active boolean [default: true]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id']
+  updated_by varchar [null, note: 'FK to users.id']
 
   indexes {
     name
     slug
     is_active
+    created_by
+    updated_by
   }
 }
 
@@ -60,12 +72,14 @@ Table role_contexts {
   company_id varchar [null, note: 'For EMPLOYER role - company they belong to. Required for EMPLOYER roles']
   hr_role_id varchar [null, note: 'FK to hr_roles - роль HR внутри компании (HR | HR_ADMIN) - только для EMPLOYER']
   created_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this role context']
 
   indexes {
     user_id
     user_role_id
     company_id
     hr_role_id
+    created_by
   }
 }
 
@@ -76,11 +90,16 @@ Table company_types {
   description text [null]
   is_active boolean [default: true]
   created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id']
+  updated_by varchar [null, note: 'FK to users.id']
 
   indexes {
     name
     slug
     is_active
+    created_by
+    updated_by
   }
 }
 
@@ -92,11 +111,15 @@ Table companies {
   owner_id varchar [not null, note: 'User who created company (EMPLOYER with HR_ADMIN role)']
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this company']
+  updated_by varchar [null, note: 'FK to users.id - who last updated this company']
 
   indexes {
     owner_id
     inn
     company_type_id
+    created_by
+    updated_by
   }
 }
 
@@ -142,9 +165,13 @@ Table candidate_profiles {
   location varchar(255) [null]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this profile']
+  updated_by varchar [null, note: 'FK to users.id - who last updated this profile']
 
   indexes {
     user_id
+    created_by
+    updated_by
   }
 }
 
@@ -172,11 +199,15 @@ Table resumes {
   is_public boolean [default: false]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this resume']
+  updated_by varchar [null, note: 'FK to users.id - who last updated this resume']
 
   indexes {
     candidate_id
     is_active
     is_public
+    created_by
+    updated_by
   }
 }
 
@@ -186,10 +217,12 @@ Table resume_versions {
   version integer [default: 1]
   data json [note: 'JSON snapshot of resume at version']
   created_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this version']
 
   indexes {
     resume_id
     (resume_id, version) [unique]
+    created_by
   }
 }
 
@@ -197,6 +230,7 @@ Table experiences {
   id varchar [primary key, note: 'UUID']
   resume_id varchar [not null]
   company varchar(255) [not null]
+  company_id varchar [null, note: 'FK to companies.id - связь с компанией в системе (опционально)']
   position varchar(255) [not null]
   description text [null]
   start_date timestamp [not null]
@@ -205,11 +239,16 @@ Table experiences {
   location varchar(255) [null]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this experience']
+  updated_by varchar [null, note: 'FK to users.id - who last updated this experience']
 
   indexes {
     resume_id
     company
+    company_id
     position
+    created_by
+    updated_by
   }
 }
 
@@ -224,11 +263,15 @@ Table educations {
   description text [null]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this education']
+  updated_by varchar [null, note: 'FK to users.id - who last updated this education']
 
   indexes {
     resume_id
     institution
     degree
+    created_by
+    updated_by
   }
 }
 
@@ -244,16 +287,20 @@ Table projects {
   is_active boolean [default: true]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this project']
+  updated_by varchar [null, note: 'FK to users.id - who last updated this project']
 
   indexes {
     company_id
     is_active
+    created_by
+    updated_by
   }
 }
 
 Table vacancies {
   id varchar [primary key, note: 'UUID']
-  project_id varchar [not null, note: 'FK to projects - вакансия привязана к проекту компании']
+  project_id varchar [null, note: 'FK to projects - вакансия может быть привязана к проекту компании (необязательно)']
   title varchar(255) [not null]
   description text [not null]
   position varchar(255) [null]
@@ -267,9 +314,11 @@ Table vacancies {
   is_public boolean [default: true]
   expires_at timestamp [null]
   views_count integer [default: 0]
-  applications_count integer [default: 0]
+  replies_count integer [default: 0, note: 'Renamed from applications_count']
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this vacancy']
+  updated_by varchar [null, note: 'FK to users.id - who last updated this vacancy']
 
   indexes {
     project_id
@@ -278,14 +327,16 @@ Table vacancies {
     work_type
     employment_type
     expires_at
+    created_by
+    updated_by
   }
 }
 
 // ============================================
-// Applications
+// Replies (formerly Applications)
 // ============================================
 
-Table applications {
+Table replies {
   id varchar [primary key, note: 'UUID']
   candidate_id varchar [not null]
   vacancy_id varchar [not null]
@@ -295,14 +346,18 @@ Table applications {
   cover_letter text [null]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this reply']
+  updated_by varchar [null, note: 'FK to users.id - who last updated this reply']
 
-  Note: 'Unique constraint: (candidate_id, vacancy_id) - One application per candidate per vacancy'
+  Note: 'Unique constraint: (candidate_id, vacancy_id) - One reply per candidate per vacancy'
 
   indexes {
     candidate_id
     vacancy_id
     status
     created_at
+    created_by
+    updated_by
     (candidate_id, vacancy_id) [unique]
   }
 }
@@ -319,11 +374,15 @@ Table skills {
   description text [null]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id']
+  updated_by varchar [null, note: 'FK to users.id']
 
   indexes {
     name
     slug
     category
+    created_by
+    updated_by
   }
 }
 
@@ -333,10 +392,12 @@ Table resume_skills {
   skill_id varchar [not null]
   level varchar [null, note: 'BASIC | INTERMEDIATE | ADVANCED | EXPERT']
   created_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id']
 
   indexes {
     resume_id
     skill_id
+    created_by
     (resume_id, skill_id) [unique]
   }
 }
@@ -348,10 +409,12 @@ Table vacancy_skills {
   is_required boolean [default: false]
   level varchar [null, note: 'BASIC | INTERMEDIATE | ADVANCED | EXPERT']
   created_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id']
 
   indexes {
     vacancy_id
     skill_id
+    created_by
     (vacancy_id, skill_id) [unique]
   }
 }
@@ -362,14 +425,18 @@ Table vacancy_skills {
 
 Table chats {
   id varchar [primary key, note: 'UUID']
-  application_id varchar [unique, null]
+  reply_id varchar [unique, null, note: 'FK to replies.id - renamed from application_id']
   type varchar [default: 'DIRECT', note: 'DIRECT | APPLICATION | GROUP']
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this chat']
+  updated_by varchar [null, note: 'FK to users.id - who last updated this chat']
 
   indexes {
-    application_id
+    reply_id
     type
+    created_by
+    updated_by
   }
 }
 
@@ -401,11 +468,15 @@ Table messages {
   is_deleted boolean [default: false]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who created this message (usually same as user_id)']
+  updated_by varchar [null, note: 'FK to users.id - who last updated this message']
 
   indexes {
     chat_id
     user_id
     created_at
+    created_by
+    updated_by
   }
 }
 
@@ -424,11 +495,13 @@ Table files {
   s3_key varchar(500) [not null]
   type varchar [not null, note: 'RESUME | DOCUMENT | AVATAR | IMAGE | VACANCY_IMAGE']
   created_at timestamp [default: `now()`]
+  created_by varchar [null, note: 'FK to users.id - who uploaded this file']
 
   indexes {
     user_id
     type
     created_at
+    created_by
   }
 }
 
@@ -448,15 +521,52 @@ Ref: candidate_profiles.user_id > users.id [delete: cascade]
 Ref: chat_members.user_id > users.id [delete: cascade]
 Ref: messages.user_id > users.id [delete: cascade]
 Ref: files.user_id > users.id [delete: cascade]
-Ref: applications.candidate_id > users.id [delete: cascade]
-// Note: ApplicationCandidate relation
+Ref: replies.candidate_id > users.id [delete: cascade]
+// Note: ReplyCandidate relation
+
+// Self-referencing for created_by/updated_by
+Ref: users.created_by > users.id [delete: set null]
+Ref: users.updated_by > users.id [delete: set null]
+Ref: user_roles.created_by > users.id [delete: set null]
+Ref: user_roles.updated_by > users.id [delete: set null]
+Ref: hr_roles.created_by > users.id [delete: set null]
+Ref: hr_roles.updated_by > users.id [delete: set null]
+Ref: role_contexts.created_by > users.id [delete: set null]
+Ref: company_types.created_by > users.id [delete: set null]
+Ref: company_types.updated_by > users.id [delete: set null]
+Ref: companies.created_by > users.id [delete: set null]
+Ref: companies.updated_by > users.id [delete: set null]
+Ref: candidate_profiles.created_by > users.id [delete: set null]
+Ref: candidate_profiles.updated_by > users.id [delete: set null]
+Ref: resumes.created_by > users.id [delete: set null]
+Ref: resumes.updated_by > users.id [delete: set null]
+Ref: resume_versions.created_by > users.id [delete: set null]
+Ref: experiences.created_by > users.id [delete: set null]
+Ref: experiences.updated_by > users.id [delete: set null]
+Ref: experiences.company_id > companies.id [delete: set null]
+Ref: educations.created_by > users.id [delete: set null]
+Ref: educations.updated_by > users.id [delete: set null]
+Ref: projects.created_by > users.id [delete: set null]
+Ref: projects.updated_by > users.id [delete: set null]
+Ref: vacancies.created_by > users.id [delete: set null]
+Ref: vacancies.updated_by > users.id [delete: set null]
+Ref: replies.created_by > users.id [delete: set null]
+Ref: replies.updated_by > users.id [delete: set null]
+Ref: skills.created_by > users.id [delete: set null]
+Ref: skills.updated_by > users.id [delete: set null]
+Ref: resume_skills.created_by > users.id [delete: set null]
+Ref: vacancy_skills.created_by > users.id [delete: set null]
+Ref: chats.created_by > users.id [delete: set null]
+Ref: chats.updated_by > users.id [delete: set null]
+Ref: messages.created_by > users.id [delete: set null]
+Ref: messages.updated_by > users.id [delete: set null]
+Ref: files.created_by > users.id [delete: set null]
 
 // Company relationships
 Ref: companies.owner_id > users.id [delete: cascade]
 // Note: Нельзя удалить тип компании если есть компании этого типа
 Ref: companies.company_type_id > company_types.id [delete: restrict]
 Ref: role_contexts.company_id > companies.id [delete: set null]
-// Note: EMPLOYER roles belong to company
 
 // Profile relationships
 Ref: resumes.candidate_id > candidate_profiles.id [delete: cascade]
@@ -466,22 +576,22 @@ Ref: resume_versions.resume_id > resumes.id [delete: cascade]
 Ref: experiences.resume_id > resumes.id [delete: cascade]
 Ref: educations.resume_id > resumes.id [delete: cascade]
 Ref: resume_skills.resume_id > resumes.id [delete: cascade]
-Ref: applications.resume_id > resumes.id [delete: set null]
-Ref: applications.resume_version_id > resume_versions.id [delete: set null]
+Ref: replies.resume_id > resumes.id [delete: set null]
+Ref: replies.resume_version_id > resume_versions.id [delete: set null]
 
 // Project & Vacancy relationships
 Ref: projects.company_id > companies.id [delete: cascade]
-Ref: vacancies.project_id > projects.id [delete: cascade]
-Ref: applications.vacancy_id > vacancies.id [delete: cascade]
+Ref: vacancies.project_id > projects.id [delete: set null, note: 'Optional - vacancy can exist without project']
+Ref: replies.vacancy_id > vacancies.id [delete: cascade]
 Ref: vacancy_skills.vacancy_id > vacancies.id [delete: cascade]
 
 // Skill relationships
 Ref: resume_skills.skill_id > skills.id [delete: cascade]
 Ref: vacancy_skills.skill_id > skills.id [delete: cascade]
 
-// Application relationships
-Ref: chats.application_id > applications.id [delete: cascade]
-// Note: Application -> Company relationship is via vacancy.project_id -> projects.company_id -> companies.id
+// Reply relationships (formerly Application)
+Ref: chats.reply_id > replies.id [delete: cascade]
+// Note: Reply -> Company relationship is via vacancy.project_id -> projects.company_id -> companies.id
 
 // Chat relationships
 Ref: chat_members.chat_id > chats.id [delete: cascade]

@@ -345,5 +345,5 @@ mail/
 
 ## Ссылки
 
-- [Core Events Module](../../15-events/index.md) - централизованная система событий
-- [Event Decorators](../../15-events/event-decorators.md) - декораторы для подписки на события
+- [Core Events Module](../../21-events/index.md) - централизованная система событий
+- [Event Decorators](../../21-events/event-decorators.md) - декораторы для подписки на события

@@ -454,7 +454,7 @@ handleUserCreated(payload: EventPayloadMap[AppEvent.USER_CREATED]) {
 - Если событие нужно только внутри модуля → **локальное событие** в `application/events/`
 - Если на событие должны подписаться другие модули → **глобальное событие** в `core/events/`
 
-См. подробнее: [Core Events Module](../../15-events/index.md)
+См. подробнее: [Core Events Module](../../21-events/index.md)
 
 #### Структура с событиями
 
@@ -693,7 +693,7 @@ async handleUserCreated(payload) {
 
 ## Ссылки на документацию
 
-- [Core Events Module](../../15-events/index.md) - централизованная система событий
+- [Core Events Module](../../21-events/index.md) - централизованная система событий
 - [Queue Processors](../../08-queue/queue-processors.md) - обработчики очередей
 - [Тестирование модулей](./testing.md) - принципы тестирования
 - [Создание нового модуля](./module-template.md) - шаблон модуля

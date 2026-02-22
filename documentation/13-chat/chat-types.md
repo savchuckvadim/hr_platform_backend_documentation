@@ -90,7 +90,7 @@ async createApplication(candidateId: string, dto: CreateApplicationDto) {
         // Создаем чат по отклику
         await this.chatsService.createChat(candidateId, {
             type: ChatType.APPLICATION,
-            applicationId: application.id,
+            replyId: reply.id, // Renamed from applicationId
             memberIds: [hrRoleContext.userId],
         });
     }
@@ -104,4 +104,4 @@ async createApplication(candidateId: string, dto: CreateApplicationDto) {
 1. **Автоматическое создание** - для APPLICATION чатов
 2. **Проверяйте участников** - перед созданием
 3. **Используйте правильный тип** - для разных сценариев
-4. **Связывайте с Application** - для APPLICATION чатов
+4. **Связывайте с Reply** - для APPLICATION чатов (бывший Application)

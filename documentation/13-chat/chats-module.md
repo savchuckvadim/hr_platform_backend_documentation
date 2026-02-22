@@ -46,12 +46,12 @@ export class CreateChatDto {
     type: ChatType;
 
     @ApiProperty({
-        description: 'Application ID (for APPLICATION type chat)',
+        description: 'Reply ID (for APPLICATION type chat - renamed from applicationId)',
         required: false
     })
     @IsOptional()
     @IsUUID()
-    applicationId?: string;
+    replyId?: string; // Renamed from applicationId
 
     @ApiProperty({
         description: 'Member IDs (excluding creator)',
@@ -89,7 +89,7 @@ export class ChatDto {
     name?: string;
     description?: string;
     avatar?: string;
-    applicationId?: string;
+    replyId?: string; // Renamed from applicationId
     createdBy: string;
     createdAt: Date;
     updatedAt: Date;
@@ -165,7 +165,7 @@ export class ChatsService {
                 throw new ForbiddenException('Application ID is required for APPLICATION type chat');
             }
 
-            const application = await this.applicationRepository.findById(createChatDto.applicationId);
+            const reply = await this.replyRepository.findById(createChatDto.replyId);
             if (!application) {
                 throw new NotFoundException('Application not found');
             }
@@ -323,7 +323,7 @@ export class ChatsService {
         application: any,
     ): Promise<boolean> {
         // Кандидат
-        if (application.candidateId === userId) {
+        if (reply.candidateId === userId) {
             return true;
         }
 
@@ -346,7 +346,7 @@ export class ChatsService {
         const participants: string[] = [];
 
         // Кандидат
-        participants.push(application.candidateId);
+        participants.push(reply.candidateId);
 
         // HR компании (root или нанятый)
         // Получаем компанию из вакансии
@@ -474,7 +474,7 @@ export abstract class ChatsRepository {
     abstract findPrivateChat(userId1: string, userId2: string): Promise<Chat | null>;
     abstract create(data: {
         type: ChatType;
-        applicationId?: string;
+        replyId?: string; // Renamed from applicationId
         createdBy: string;
         name?: string;
         description?: string;
