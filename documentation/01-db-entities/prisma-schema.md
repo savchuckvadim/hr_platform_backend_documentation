@@ -36,8 +36,8 @@ model User {
   chats             ChatMember[]
   messages          Message[]
   files             File[]
-  sentReplies       Reply[]            @relation("ReplyCandidate")
-  resumes           Resume[]           @relation("ResumeCandidate") // Резюме кандидата
+  sentReplies       Reply[]            @relation("ReplyUser")
+  resumes           Resume[]           @relation("ResumeUser") // Резюме кандидата
   ownedCompanies    Company[]          // Компании, где user = owner (EMPLOYER с HR_ADMIN)
   // Self-referencing for created_by/updated_by
   createdUsers      User[]             @relation("UserCreatedBy")
@@ -267,7 +267,8 @@ model Company {
   owner         User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   roleContexts  RoleContext[] // HR сотрудники компании
   projects      Project[]
-  experiences   Experience[]  // Опыт работы в этой компании
+  vacancies     Vacancy[]     // Вакансии компании
+  experiences   Experience[]  @relation("ExperienceCompany") // Опыт работы в этой компании (опциональная связь через Experience.companyId)
   createdByUser User?         @relation("CompanyCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
   updatedByUser User?         @relation("CompanyUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
@@ -335,7 +336,7 @@ model Project {
 ```prisma
 model Resume {
   id           String    @id @default(uuid())
-  candidateId  String    @map("candidate_id") // User ID - ссылка на пользователя (кандидата)
+  userId       String    @map("user_id") // User ID - прямая ссылка на users.id (кандидат)
   title        String    @db.VarChar(255)
   position     String?   @db.VarChar(255)
   salaryMin    Int?      @map("salary_min")
@@ -351,7 +352,7 @@ model Resume {
   createdBy    String?   @map("created_by")
   updatedBy    String?   @map("updated_by")
 
-  candidate      User            @relation("ResumeCandidate", fields: [candidateId], references: [id], onDelete: Cascade)
+  user          User            @relation("ResumeUser", fields: [userId], references: [id], onDelete: Cascade) // Прямая связь с User через userId
   skills         ResumeSkill[]
   experiences    Experience[]
   educations     Education[]
@@ -361,7 +362,7 @@ model Resume {
   updatedByUser   User?           @relation("ResumeUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("resumes")
-  @@index([candidateId])
+  @@index([userId])
   @@index([isActive])
   @@index([isPublic])
   @@index([createdBy])
@@ -371,7 +372,8 @@ model Resume {
 
 **Принципы:**
 - Один кандидат (User) может иметь несколько резюме
-- `candidateId` ссылается на `User.id` (не на CandidateProfile.id) - более прозрачно для фронтенда
+- `userId` - прямая ссылка на `users.id` (не на CandidateProfile.id) - более прозрачно для фронтенда
+- Связь с User через `user` relation - прямая связь через `userId` → `User.id`
 - `contactEmail` и `contactPhone` опционально переопределяют контакты из профиля
 - `isActive` - активно ли резюме
 - `isPublic` - публично ли резюме для просмотра работодателями
@@ -388,7 +390,7 @@ model ResumeVersion {
   version   Int      @default(1)
   data      Json     // JSON snapshot резюме на момент версии
   createdAt DateTime @default(now())
-  // createdBy не нужен - версионирование, можно определить по resume.candidateId
+  // createdBy не нужен - версионирование, можно определить по resume.userId
 
   resume        Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
 
@@ -411,8 +413,8 @@ model ResumeVersion {
 model Experience {
   id          String    @id @default(uuid())
   resumeId    String    @map("resume_id")
-  company     String    @db.VarChar(255)
-  companyId   String?   @map("company_id") // FK to companies - связь с компанией в системе (опционально)
+  company     String    @db.VarChar(255) // Название компании (текст)
+  companyId   String?   @map("company_id") // FK to companies.id - опциональная связь с существующей компанией в системе
   position    String    @db.VarChar(255)
   description String?   @db.Text
   startDate   DateTime  @map("start_date")
@@ -423,8 +425,8 @@ model Experience {
   updatedAt   DateTime  @updatedAt
   // createdBy/updatedBy не нужны - часть резюме, обычно создается самим пользователем
 
-  resume  Resume   @relation(fields: [resumeId], references: [id], onDelete: Cascade)
-  companyRelation Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  resume         Resume   @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  companyRelation Company? @relation("ExperienceCompany", fields: [companyId], references: [id], onDelete: SetNull) // Опциональная связь - может быть связан с существующей компанией, а может и не быть
 
   @@map("experiences")
   @@index([resumeId])
@@ -436,6 +438,10 @@ model Experience {
 
 **Принципы:**
 - Отдельная таблица для удобной фильтрации и поиска
+- `company` - название компании (текст, всегда заполнено)
+- `companyId` - опциональная связь с существующей компанией в системе (если компания есть в БД)
+- Если компания есть в системе → `companyId` заполнен, связь с `Company`
+- Если компании нет в системе → `companyId` = null, только текст в `company`
 - `isCurrent` - текущее место работы
 - Индексы для быстрого поиска по компании и должности
 
@@ -472,11 +478,12 @@ model Education {
 
 ### 14. Vacancy - Вакансия
 
-Вакансия от работодателя. Привязана к проекту компании.
+Вакансия от работодателя. Обязательно привязана к компании, опционально к проекту.
 
 ```prisma
 model Vacancy {
   id              String    @id @default(uuid())
+  companyId       String    @map("company_id") // Обязательно - вакансия всегда привязана к компании
   projectId       String?   @map("project_id") // Необязательно - вакансия может существовать без проекта
   title           String    @db.VarChar(255)
   description     String    @db.Text
@@ -497,13 +504,15 @@ model Vacancy {
   createdBy       String?   @map("created_by")
   updatedBy       String?   @map("updated_by")
 
-  project     Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade) // Обязательная связь с компанией
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull) // Опциональная связь с проектом
   skills      VacancySkill[]
   replies     Reply[]
   createdByUser User?   @relation("VacancyCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
   updatedByUser User?   @relation("VacancyUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("vacancies")
+  @@index([companyId])
   @@index([projectId])
   @@index([isActive])
   @@index([isPublic])
@@ -532,6 +541,9 @@ enum EmploymentType {
 ```
 
 **Принципы:**
+- Вакансия всегда привязана к компании через `companyId` (обязательно)
+- Вакансия может быть привязана к проекту через `projectId` (опционально)
+- Если вакансия привязана к проекту, проект должен принадлежать той же компании
 - Один работодатель может иметь множество вакансий
 - `isActive` - активно ли размещение
 - `isPublic` - видно ли всем или только по ссылке
@@ -545,7 +557,7 @@ enum EmploymentType {
 ```prisma
 model Reply {
   id              String        @id @default(uuid())
-  candidateId     String        @map("candidate_id")
+  userId          String        @map("user_id") // User ID - прямая ссылка на users.id (кандидат)
   vacancyId       String        @map("vacancy_id")
   resumeId        String?       @map("resume_id")
   resumeVersionId String?       @map("resume_version_id")
@@ -556,8 +568,8 @@ model Reply {
   createdBy       String?       @map("created_by")
   updatedBy       String?       @map("updated_by")
 
-  candidate      User          @relation("ReplyCandidate", fields: [candidateId], references: [id], onDelete: Cascade)
-  // Связь с компанией через vacancy.project.company
+  user            User          @relation("ReplyUser", fields: [userId], references: [id], onDelete: Cascade) // Прямая связь с User через userId
+  // Связь с компанией через vacancy.company (прямая связь) или vacancy.project.company
   vacancy        Vacancy       @relation(fields: [vacancyId], references: [id], onDelete: Cascade)
   resume         Resume?       @relation(fields: [resumeId], references: [id], onDelete: SetNull)
   resumeVersion  ResumeVersion? @relation(fields: [resumeVersionId], references: [id], onDelete: SetNull)
@@ -565,9 +577,9 @@ model Reply {
   createdByUser  User?         @relation("ReplyCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
   updatedByUser  User?         @relation("ReplyUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
-  @@unique([candidateId, vacancyId])
+  @@unique([userId, vacancyId])
   @@map("replies")
-  @@index([candidateId])
+  @@index([userId])
   @@index([vacancyId])
   @@index([status])
   @@index([createdAt])
@@ -587,11 +599,14 @@ enum ReplyStatus {
 
 **Принципы:**
 - Один кандидат может откликнуться на вакансию только один раз (unique constraint)
+- `userId` - прямая ссылка на `users.id` (кандидат)
+- Связь с User через `user` relation - прямая связь через `userId` → `User.id`
 - `resumeId` - какое резюме использовано (может быть null, если отклик без резюме)
 - `resumeVersionId` - версия резюме на момент отклика (для истории)
 - `status` - статус отклика с различными этапами
 - `coverLetter` - сопроводительное письмо
 - Связь с Chat для общения по отклику
+- Связь с компанией через `vacancy.company` (прямая связь) или `vacancy.project.company`
 - В будущем: лимит 10 откликов/день (логика в сервисе)
 
 ### 16. Skill - Навык/Хэштег
@@ -866,18 +881,18 @@ enum FileType {
 @@index([role])
 
 // Reply (formerly Application)
-@@index([candidateId])
+@@index([userId])
 @@index([vacancyId])
 @@index([status])
 @@index([createdAt])
 
 // Vacancy
-@@index([employerId])
+@@index([projectId])
 @@index([isActive])
 @@index([isPublic])
 
 // Resume
-@@index([candidateId])
+@@index([userId])
 @@index([isActive])
 
 // Message

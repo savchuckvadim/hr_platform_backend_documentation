@@ -159,7 +159,7 @@ Table candidate_profiles {
 
 Table resumes {
   id varchar [primary key, note: 'UUID']
-  candidate_id varchar [not null]
+  user_id varchar [not null, note: 'FK to users.id - прямая ссылка на пользователя (кандидат)']
   title varchar(255) [not null]
   position varchar(255) [null]
   salary_min integer [null]
@@ -176,7 +176,7 @@ Table resumes {
   updated_by varchar [null, note: 'FK to users.id - who last updated this resume']
 
   indexes {
-    candidate_id
+    user_id
     is_active
     is_public
     created_by
@@ -190,7 +190,7 @@ Table resume_versions {
   version integer [default: 1]
   data json [note: 'JSON snapshot of resume at version']
   created_at timestamp [default: `now()`]
-  // createdBy не нужен - версионирование, можно определить по resume.candidateId
+  // createdBy не нужен - версионирование, можно определить по resume.userId
 
   indexes {
     resume_id
@@ -201,8 +201,8 @@ Table resume_versions {
 Table experiences {
   id varchar [primary key, note: 'UUID']
   resume_id varchar [not null]
-  company varchar(255) [not null]
-  company_id varchar [null, note: 'FK to companies.id - связь с компанией в системе (опционально)']
+  company varchar(255) [not null, note: 'Название компании (текст) - всегда заполнено']
+  company_id varchar [null, note: 'FK to companies.id - опциональная связь с существующей компанией в системе. Если компания есть в БД - заполнено, если нет - null']
   position varchar(255) [not null]
   description text [null]
   start_date timestamp [not null]
@@ -266,7 +266,8 @@ Table projects {
 
 Table vacancies {
   id varchar [primary key, note: 'UUID']
-  project_id varchar [null, note: 'FK to projects - вакансия может быть привязана к проекту компании (необязательно)']
+  company_id varchar [not null, note: 'FK to companies.id - обязательная связь с компанией']
+  project_id varchar [null, note: 'FK to projects.id - опциональная связь с проектом компании']
   title varchar(255) [not null]
   description text [not null]
   position varchar(255) [null]
@@ -287,6 +288,7 @@ Table vacancies {
   updated_by varchar [null, note: 'FK to users.id - who last updated this vacancy']
 
   indexes {
+    company_id
     project_id
     is_active
     is_public
@@ -304,7 +306,7 @@ Table vacancies {
 
 Table replies {
   id varchar [primary key, note: 'UUID']
-  candidate_id varchar [not null]
+  user_id varchar [not null, note: 'FK to users.id - прямая ссылка на пользователя (кандидат)']
   vacancy_id varchar [not null]
   resume_id varchar [null]
   resume_version_id varchar [null]
@@ -315,16 +317,16 @@ Table replies {
   created_by varchar [null, note: 'FK to users.id - who created this reply']
   updated_by varchar [null, note: 'FK to users.id - who last updated this reply']
 
-  Note: 'Unique constraint: (candidate_id, vacancy_id) - One reply per candidate per vacancy'
+  Note: 'Unique constraint: (user_id, vacancy_id) - One reply per user per vacancy'
 
   indexes {
-    candidate_id
+    user_id
     vacancy_id
     status
     created_at
     created_by
     updated_by
-    (candidate_id, vacancy_id) [unique, note: 'One reply per candidate per vacancy']
+    (user_id, vacancy_id) [unique, note: 'One reply per user per vacancy']
   }
 }
 
@@ -481,7 +483,7 @@ Ref: candidate_profiles.user_id > users.id [delete: cascade]
 Ref: chat_members.user_id > users.id [delete: cascade]
 Ref: messages.user_id > users.id [delete: cascade]
 Ref: files.user_id > users.id [delete: cascade]
-Ref: replies.candidate_id > users.id [delete: cascade]
+Ref: replies.user_id > users.id [delete: cascade]
 // Note: ReplyCandidate relation
 
 // Self-referencing for created_by/updated_by (только в моделях где это критично)
@@ -508,9 +510,10 @@ Ref: companies.owner_id > users.id [delete: cascade]
 // Note: Нельзя удалить тип компании если есть компании этого типа
 Ref: companies.company_type_id > company_types.id [delete: restrict]
 Ref: role_contexts.company_id > companies.id [delete: cascade, note: 'Cascade для предотвращения висячих EMPLOYER ролей']
+Ref: experiences.company_id > companies.id [delete: set null, note: 'Опциональная связь - может быть связан с существующей компанией, а может и не быть']
 
 // Profile relationships
-Ref: resumes.candidate_id > users.id [delete: cascade, note: 'User ID - ссылка на пользователя (кандидата)']
+Ref: resumes.user_id > users.id [delete: cascade, note: 'User ID - ссылка на пользователя (кандидат)']
 
 // Resume relationships
 Ref: resume_versions.resume_id > resumes.id [delete: cascade]
@@ -522,7 +525,8 @@ Ref: replies.resume_version_id > resume_versions.id [delete: set null]
 
 // Project & Vacancy relationships
 Ref: projects.company_id > companies.id [delete: cascade]
-Ref: vacancies.project_id > projects.id [delete: set null, note: 'Optional - vacancy can exist without project']
+Ref: vacancies.company_id > companies.id [delete: cascade, note: 'Обязательная связь - вакансия всегда привязана к компании']
+Ref: vacancies.project_id > projects.id [delete: set null, note: 'Опциональная связь - вакансия может существовать без проекта']
 Ref: replies.vacancy_id > vacancies.id [delete: cascade]
 Ref: vacancy_skills.vacancy_id > vacancies.id [delete: cascade]
 
@@ -532,7 +536,7 @@ Ref: vacancy_skills.skill_id > skills.id [delete: cascade]
 
 // Reply relationships (formerly Application)
 Ref: chats.reply_id > replies.id [delete: cascade]
-// Note: Reply -> Company relationship is via vacancy.project_id -> projects.company_id -> companies.id
+// Note: Reply -> Company relationship is via vacancy.company_id -> companies.id (прямая связь) или vacancy.project_id -> projects.company_id -> companies.id
 
 // Chat relationships
 Ref: chat_members.chat_id > chats.id [delete: cascade]
