@@ -9,19 +9,21 @@
 ### 1. Access Token - Stateless JWT
 
 **Характеристики:**
-- Короткоживущий токен (15-30 минут)
+- Короткоживущий токен (15 минут)
 - Stateless - не хранится в БД
 - Содержит минимальную информацию: `userId`, `roleContextId`, `userRoleName`
 - Подписывается секретным ключом
-- Проверяется на каждом запросе через JWT Strategy
+- Проверяется на каждом запросе через `AccessTokenGuard`
+- **Хранится в HttpOnly cookie** (`accessToken`) для безопасности
+- Также может быть передан в заголовке `Authorization: Bearer <token>` (fallback)
 
 **Структура JWT Payload:**
 ```typescript
 {
   sub: string,           // userId
   roleContextId: string, // ID активного role context
-  userRoleName: string,  // Название системной роли из таблицы user_roles (используется UserRoleName enum для предустановленных)
-  companyId: string | null, // ID компании (для EMPLOYER роли - обязательно)
+  userRoleName: string,  // Системная роль (enum UserRole: CANDIDATE | EMPLOYER | ADMIN)
+  companyId: string | null, // ID компании (nullable в БД, но обязательно для EMPLOYER - валидация на уровне приложения)
   hrRoleName: string | null, // Название HR роли из таблицы hr_roles (используется HrRoleName enum для предустановленных, только для EMPLOYER)
   iat: number,           // issued at
   exp: number            // expiration
@@ -30,13 +32,12 @@
 
 **Двухуровневая система ролей:**
 
-1. **Системные роли** (`userRoleName` - из таблицы `user_roles`):
-   - Предустановленные роли (enum `UserRoleName`):
+1. **Системные роли** (`userRoleName` - enum `UserRole`):
+   - Предустановленные роли (enum `UserRole`):
      - `CANDIDATE` - соискатель
      - `EMPLOYER` - работодатель (владелец компании или HR сотрудник)
      - `ADMIN` - администратор системы
-   - Расширяемо через таблицу `user_roles` (можно добавить новые роли в БД)
-   - Предустановленные роли обязательно создаются через seed данные
+   - Роли определяются через enum в БД (типобезопасно)
 
 2. **HR роли внутри компании** (`hrRoleName` - из таблицы `hr_roles`):
    - Предустановленные роли (enum `HrRoleName`):
@@ -48,18 +49,20 @@
 **Принцип:**
 - Владелец компании регистрируется как EMPLOYER с `hrRoleName: HR_ADMIN`
 - Все работодатели работают через EMPLOYER роль
-- Роли хранятся в таблицах `user_roles` и `hr_roles` для расширяемости
-- Для предустановленных ролей используются enum'ы (`UserRoleName`, `HrRoleName`) для типобезопасности
-- Предустановленные роли обязательно должны быть в БД (создаются через seed)
+- Системные роли определяются через enum `UserRole` (CANDIDATE, EMPLOYER, ADMIN)
+- HR роли хранятся в таблице `hr_roles` для расширяемости
+- Для предустановленных HR ролей используется enum `HrRoleName` для типобезопасности
 
 ### 2. Refresh Token - Stateful
 
 **Характеристики:**
-- Долгоживущий токен (7-30 дней)
+- Долгоживущий токен (30 дней)
 - Stateful - хранится в БД в хэшированном виде
 - Привязан к устройству (`deviceId`)
 - Привязан к role context (`roleContextId`)
 - Используется только для получения нового access token
+- **Хранится в HttpOnly cookie** (`refreshToken`) для безопасности
+- **Извлекается из cookie** при refresh запросах
 
 **Принцип хранения:**
 ```
@@ -70,6 +73,7 @@ Refresh Token = (userId + roleContextId + deviceId)
 - Хранится в БД в хэшированном виде (bcrypt/argon2)
 - Сравнение через hash comparison
 - Автоматическая очистка истёкших токенов через cron
+- HttpOnly cookie защищает от XSS атак
 
 ### 3. Multi-Device поддержка
 
@@ -160,9 +164,9 @@ Refresh Token = (userId + roleContextId + deviceId)
 **Поля:**
 - `id` - UUID
 - `userId` - связь с User
-- `type` - глобальный тип роли: `CANDIDATE | EMPLOYER | ADMIN`
-- `companyId` - для EMPLOYER роли - компания, к которой привязан работодатель (обязательно для EMPLOYER)
-- `hrRoleName` - для EMPLOYER роли: `HR | HR_ADMIN` (из таблицы hr_roles, HR_ADMIN может добавлять других HR, масштабируемо)
+- `userRole` - глобальный тип роли (enum): `CANDIDATE | EMPLOYER | ADMIN`
+- `companyId` - для EMPLOYER роли - компания, к которой привязан работодатель (nullable в БД, но обязательно для EMPLOYER - валидация на уровне приложения)
+- `hrRoleId` - для EMPLOYER роли: FK к `hr_roles` (HR | HR_ADMIN, HR_ADMIN может добавлять других HR, масштабируемо)
 - `createdAt`
 
 **Типы ролей (глобальный уровень):**
@@ -255,22 +259,24 @@ Refresh Token = (userId + roleContextId + deviceId)
 
 1. Пользователь отправляет `RegisterCandidateDto` (email, password, fio)
 2. Создаётся User
-3. Создаётся RoleContext (type: CANDIDATE)
+3. Создаётся RoleContext (userRole: CANDIDATE)
 4. Создаётся CandidateProfile
 5. Генерируются access + refresh токены
 6. Refresh токен сохраняется в Token таблице
-7. Возвращается access token и refresh token
+7. **Токены устанавливаются в HttpOnly cookies** через `AuthCookieInterceptor`
+8. Возвращается ответ (токены удаляются из body)
 
 ### Регистрация работодателя (создание компании)
 
 1. Пользователь отправляет `RegisterEmployerDto` (email, password, companyName, inn, companyTypeId)
 2. Создаётся User
 3. Создаётся Company (с companyTypeId из таблицы company_types)
-4. Получается UserRole (EMPLOYER) и HrRole (HR_ADMIN) из таблиц, создаётся RoleContext (userRoleId, companyId, hrRoleId: HR_ADMIN)
+4. Получается HrRole (HR_ADMIN) из таблицы hr_roles, создаётся RoleContext (userRole: EMPLOYER, companyId, hrRoleId: HR_ADMIN)
    - Владелец компании = EMPLOYER с правами HR_ADMIN
 5. EmployerProfile не создаётся - вся информация о компании в таблице Company
 6. Генерируются токены
-7. Возвращаются токены
+7. **Токены устанавливаются в HttpOnly cookies** через `AuthCookieInterceptor`
+8. Возвращается ответ (токены удаляются из body)
 
 **Примечание:**
 - Вся информация о компании хранится в таблице `companies`, а не в `employer_profiles`
@@ -279,9 +285,10 @@ Refresh Token = (userId + roleContextId + deviceId)
 
 1. HR-ADMIN отправляет `RegisterHrDto` (email, password, companyId, hrRoleName)
 2. Создаётся User
-3. Получается UserRole (EMPLOYER) и HrRole (HR или HR_ADMIN) из таблиц, создаётся RoleContext (userRoleId, companyId, hrRoleId)
+3. Получается HrRole (HR или HR_ADMIN) из таблицы hr_roles, создаётся RoleContext (userRole: EMPLOYER, companyId, hrRoleId)
 4. Генерируются токены
-5. Возвращаются токены
+5. **Токены устанавливаются в HttpOnly cookies** через `AuthCookieInterceptor`
+6. Возвращается ответ (токены удаляются из body)
 
 **Примечание:** Только HR_ADMIN может регистрировать новых EMPLOYER (HR) в компанию.
 
@@ -293,45 +300,58 @@ Refresh Token = (userId + roleContextId + deviceId)
 4. Создаётся refresh токен для конкретного deviceId
 5. Проверяется unique constraint (userId, roleContextId, deviceId)
    - Если существует - удаляется старый, создаётся новый
-6. Генерируется access token
-7. Возвращаются токены
+6. Генерируются access и refresh токены
+7. **Токены устанавливаются в HttpOnly cookies** через `AuthCookieInterceptor`
+8. Возвращается ответ (токены удаляются из body перед отправкой)
 
 ### Refresh
 
-1. Пользователь отправляет refresh token
+1. **Refresh token извлекается из cookie** (`refreshToken`) через `CookieService`
 2. Проверяется наличие в Token таблице
 3. Проверяется срок действия (expiresAt)
 4. Сравнивается hash refresh token
-5. Генерируется новый access token
-6. Опционально: обновляется expiresAt (sliding session)
-7. Возвращается новый access token
+5. Генерируются новые access и refresh токены
+6. **Новые токены устанавливаются в HttpOnly cookies** через `AuthCookieInterceptor`
+7. Возвращается ответ (токены удаляются из body перед отправкой)
+8. При ошибке - куки очищаются автоматически
 
 ### Logout одного устройства
 
-1. Пользователь отправляет запрос на logout
-2. Извлекается deviceId из refresh token или request
-3. Удаляется запись из Token таблицы (userId, roleContextId, deviceId)
+1. **Refresh token извлекается из cookie** через `CookieService`
+2. Удаляется запись из Token таблицы по refresh token
+3. **Куки очищаются** через `CookieService.clearAuthCookies()`
 4. Возвращается успешный ответ
 
 ### Logout со всех устройств
 
 1. Пользователь отправляет запрос на logout-all
 2. Удаляются все записи из Token таблицы для userId
-3. Возвращается успешный ответ
+3. **Куки текущего устройства очищаются** через `CookieService.clearAuthCookies()`
+4. Возвращается успешный ответ
 
 ## Безопасность
 
 ### Хранение токенов
 
 **Access Token:**
-- Хранится в памяти клиента (не в localStorage)
-- Передаётся в заголовке `Authorization: Bearer <token>`
-- HttpOnly cookies (опционально, для дополнительной защиты)
+- **Хранится в HttpOnly cookie** (`accessToken`) - основной способ
+- Fallback: может быть передан в заголовке `Authorization: Bearer <token>`
+- `AccessTokenGuard` проверяет сначала заголовок, затем cookie
+- Время жизни: 15 минут
+- Настройки cookie: `httpOnly: true`, `secure: true` (production), `sameSite: 'none'` (production)
 
 **Refresh Token:**
-- Хранится в HttpOnly cookie (рекомендуется)
-- Или в secure storage (для мобильных приложений)
-- Никогда не передаётся в URL
+- **Хранится в HttpOnly cookie** (`refreshToken`) - обязательный способ
+- Никогда не передаётся в URL или body запроса
+- Время жизни: 30 дней
+- Настройки cookie: `httpOnly: true`, `secure: true` (production), `sameSite: 'none'` (production)
+
+**CookieService:**
+- `setAccessToken(res, token)` - устанавливает access token в cookie
+- `setRefreshToken(res, token)` - устанавливает refresh token в cookie
+- `getAccessToken(req)` - извлекает access token из cookie
+- `getRefreshToken(req)` - извлекает refresh token из cookie
+- `clearAuthCookies(res)` - очищает оба токена из cookies
 
 ### Валидация
 
@@ -371,25 +391,42 @@ Refresh Token = (userId + roleContextId + deviceId)
 
 Guards определяют доступ к маршрутам на основе role context:
 
-- `@UseGuards(JwtAuthGuard)` - требует валидный access token
-- `@UseGuards(JwtAuthGuard, RolesGuard)` - требует валидный token + определённую роль
-- `@Roles('EMPLOYER')` - ограничивает доступ по ролям
+- `@UseGuards(AccessTokenGuard)` - требует валидный access token (из cookie или header)
+- `@UseGuards(AccessTokenGuard, RolesGuard)` - требует валидный token + определённую роль
+- `@Roles(UserRole.EMPLOYER)` - ограничивает доступ по ролям
+- `@Public()` - помечает маршрут как публичный (игнорирует глобальный guard)
+
+**AccessTokenGuard:**
+- Проверяет access token из заголовка `Authorization: Bearer <token>` (приоритет)
+- Fallback: проверяет access token из cookie `accessToken`
+- Валидирует токен через `TokenService.validateAccessToken()`
+- Устанавливает `request.user` с данными из токена
 
 ### Decorators
 
 Упрощают доступ к данным пользователя:
 
-- `@CurrentUser()` - возвращает User entity
-- `@CurrentRole()` - возвращает RoleContext entity
+- `@CurrentUser()` - возвращает User entity из `request.user`
+- `@CurrentRole()` - возвращает RoleContext entity (если есть)
+- `@CurrentCompany()` - возвращает companyId для EMPLOYER ролей
 - `@Roles(...)` - метаданные для RolesGuard
+- `@SetAuthCookie()` - применяет `AuthCookieInterceptor` для автоматической установки токенов в cookies
 
 ### Interceptors
 
-Автоматическое продление access token:
+Автоматическая установка токенов в cookies:
 
-- `TokenRefreshInterceptor` - проверяет время до истечения
-- Автоматически генерирует новый access token при необходимости
-- Прозрачно для клиента
+- `AuthCookieInterceptor` - автоматически устанавливает токены в HttpOnly cookies
+- Применяется через декоратор `@SetAuthCookie()`
+- Удаляет токены из response body перед отправкой клиенту
+- Используется на endpoints: login, registration, activate, refresh
+
+**Принцип работы:**
+1. Endpoint возвращает объект с полем `tokens: { accessToken, refreshToken }`
+2. `AuthCookieInterceptor` перехватывает response
+3. Устанавливает токены в cookies через `CookieService`
+4. Удаляет `tokens` из response body
+5. Клиент получает только данные пользователя, токены в cookies
 
 ## Cron задачи
 
@@ -451,12 +488,12 @@ Logout на телефоне не влияет на компьютер.
 ```
 Владелец создаёт компанию:
 - Создаётся Company (companyTypeId из company_types)
-- Получается UserRole (EMPLOYER) и HrRole (HR_ADMIN) из таблиц, создаётся RoleContext (userRoleId, companyId, hrRoleId: HR_ADMIN)
+- Получается HrRole (HR_ADMIN) из таблицы hr_roles, создаётся RoleContext (userRole: EMPLOYER, companyId, hrRoleId: HR_ADMIN)
 - Владелец = EMPLOYER с правами HR_ADMIN
 
 HR-ADMIN добавляет HR сотрудника:
 - Создаётся User для HR
-- Получается UserRole (EMPLOYER) и HrRole (HR или HR_ADMIN) из таблиц, создаётся RoleContext (userRoleId, companyId, hrRoleId)
+- Получается HrRole (HR или HR_ADMIN) из таблицы hr_roles, создаётся RoleContext (userRole: EMPLOYER, companyId, hrRoleId)
 
 EMPLOYER может логиниться с ролью EMPLOYER и иметь доступ к ресурсам компании.
 HR_ADMIN может добавлять других HR в компанию.
@@ -476,7 +513,7 @@ POST /auth/register/hr
 
 Создаётся:
 - User
-- RoleContext (userRoleId: EMPLOYER, companyId, hrRoleId: HR или HR_ADMIN)
+- RoleContext (userRole: EMPLOYER, companyId, hrRoleId: HR или HR_ADMIN)
 - Токены
 
 HR может сразу логиниться и работать от имени компании.

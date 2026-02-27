@@ -51,6 +51,7 @@ export class RegisterCandidateDto {
 // AuthController
 @Post('register/candidate')
 @Public()
+@SetAuthCookie() // Автоматически устанавливает токены в cookies
 async registerCandidate(@Body() dto: RegisterCandidateDto) {
   return this.authService.registerCandidate(dto);
 }
@@ -80,21 +81,15 @@ const user = await this.userRepository.create({
 });
 ```
 
-**Шаг 4: Получение UserRole и создание RoleContext**
+**Шаг 4: Создание RoleContext**
 
 ```typescript
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
+import { UserRole } from '@auth/enums/user-role.enum';
 
-// Получаем роль CANDIDATE из таблицы user_roles (используем enum)
-const userRole = await this.userRoleRepository.findByName(UserRoleName.CANDIDATE);
-if (!userRole) {
-  throw new InternalServerErrorException('CANDIDATE role not found. Run seed to create default roles.');
-}
-
-// Создаем RoleContext
+// Создаем RoleContext с enum ролью CANDIDATE
 const roleContext = await this.roleContextRepository.create({
   userId: user.id,
-  userRoleId: userRole.id,
+  userRole: UserRole.CANDIDATE,
   companyId: null,
   hrRoleId: null,
 });
@@ -143,13 +138,11 @@ await this.tokenRepository.create({
 
 ```typescript
 // Через EventBus
-// Загружаем userRole для события
-const userRole = await roleContext.userRole;
-
+// userRole теперь enum, не нужно загружать из БД
 this.eventBus.emit(AppEvent.USER_CREATED, {
   userId: user.id,
   email: user.email,
-  userRoleName: userRole.name, // Значение из БД (для предустановленных совпадает с UserRoleName enum)
+  userRoleName: roleContext.userRole, // Enum значение (UserRole.CANDIDATE)
   activationLink: `${baseUrl}/auth/activate/${user.activationLink}`,
 });
 ```
@@ -158,15 +151,22 @@ this.eventBus.emit(AppEvent.USER_CREATED, {
 
 ```typescript
 return {
-  accessToken,
-  refreshToken, // В production - только в HttpOnly cookie
+  tokens: {
+    accessToken,
+    refreshToken,
+  },
   user: {
     id: user.id,
     email: user.email,
-    userRoleName: roleContext.userRole.name,
+    userRoleName: roleContext.userRole, // Enum значение (UserRole.CANDIDATE)
   },
 };
 ```
+
+**Примечание:** `AuthCookieInterceptor` автоматически:
+1. Устанавливает токены в HttpOnly cookies через `CookieService`
+2. Удаляет поле `tokens` из response body
+3. Клиент получает только данные пользователя, токены в cookies
 
 ### Полная последовательность
 
@@ -247,17 +247,11 @@ const company = await this.companyRepository.create({
 });
 ```
 
-**Шаг 5: Получение ролей и создание RoleContext (EMPLOYER с HR_ADMIN)**
+**Шаг 5: Получение HrRole и создание RoleContext (EMPLOYER с HR_ADMIN)**
 
 ```typescript
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
+import { UserRole } from '@auth/enums/user-role.enum';
 import { HrRoleName } from '@auth/enums/hr-role-name.enum';
-
-// Получаем роль EMPLOYER из таблицы user_roles (используем enum)
-const userRole = await this.userRoleRepository.findByName(UserRoleName.EMPLOYER);
-if (!userRole) {
-  throw new InternalServerErrorException('EMPLOYER role not found. Run seed to create default roles.');
-}
 
 // Получаем роль HR_ADMIN из таблицы hr_roles (используем enum)
 const hrRole = await this.hrRoleRepository.findByName(HrRoleName.HR_ADMIN);
@@ -268,7 +262,7 @@ if (!hrRole) {
 // Владелец компании регистрируется как EMPLOYER с правами HR_ADMIN
 const employerRoleContext = await this.roleContextRepository.create({
   userId: user.id,
-  userRoleId: userRole.id, // FK к user_roles
+  userRole: UserRole.EMPLOYER, // Enum значение
   companyId: company.id, // Обязательно для EMPLOYER роли
   hrRoleId: hrRole.id, // FK к hr_roles - владелец = HR_ADMIN
 });
@@ -296,8 +290,8 @@ const employerRoleContext = await this.roleContextRepository.create({
    ↓
 5. Создание Company (с companyTypeId)
    ↓
-6. Получение UserRole (EMPLOYER) и HrRole (HR_ADMIN) из таблиц
-7. Создание RoleContext (userRoleId, companyId, hrRoleId: HR_ADMIN)
+6. Получение HrRole (HR_ADMIN) из таблицы hr_roles
+7. Создание RoleContext (userRole: EMPLOYER, companyId, hrRoleId: HR_ADMIN)
    - Владелец компании = EMPLOYER с правами HR_ADMIN
    - EmployerProfile не создаётся - вся информация в Company
    ↓
@@ -353,7 +347,7 @@ export class RegisterHrDto {
 **Шаг 1: Проверка прав**
 
 ```typescript
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
+import { UserRole } from '@auth/enums/user-role.enum';
 import { HrRoleName } from '@auth/enums/hr-role-name.enum';
 
 // Проверяем что текущий пользователь - HR_ADMIN этой компании
@@ -361,7 +355,7 @@ const currentRole = request.user.roleContext;
 const currentUserRole = request.user.userRole;
 const currentHrRole = request.user.hrRole;
 
-if (currentUserRole?.name !== UserRoleName.EMPLOYER || currentHrRole?.name !== HrRoleName.HR_ADMIN) {
+if (currentRole.userRole !== UserRole.EMPLOYER || currentHrRole?.name !== HrRoleName.HR_ADMIN) {
   throw new ForbiddenException('Only HR_ADMIN can register new HR');
 }
 
@@ -405,14 +399,8 @@ const user = await this.userRepository.create({
 **Шаг 5: Получение ролей и создание RoleContext (EMPLOYER)**
 
 ```typescript
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
+import { UserRole } from '@auth/enums/user-role.enum';
 import { HrRoleName } from '@auth/enums/hr-role-name.enum';
-
-// Получаем роль EMPLOYER из таблицы user_roles (используем enum)
-const userRole = await this.userRoleRepository.findByName(UserRoleName.EMPLOYER);
-if (!userRole) {
-  throw new InternalServerErrorException('EMPLOYER role not found. Run seed to create default roles.');
-}
 
 // Получаем HR роль из таблицы hr_roles (используем enum из DTO)
 const hrRole = await this.hrRoleRepository.findByName(dto.hrRoleName);
@@ -422,7 +410,7 @@ if (!hrRole) {
 
 const employerRoleContext = await this.roleContextRepository.create({
   userId: user.id,
-  userRoleId: userRole.id, // FK к user_roles
+  userRole: UserRole.EMPLOYER, // Enum значение
   companyId: dto.companyId, // Обязательно для EMPLOYER
   hrRoleId: hrRole.id, // FK к hr_roles - HR или HR_ADMIN
 });
@@ -443,8 +431,8 @@ const employerRoleContext = await this.roleContextRepository.create({
    ↓
 5. Создание User
    ↓
-6. Получение UserRole (EMPLOYER) и HrRole (HR или HR_ADMIN) из таблиц
-7. Создание RoleContext (userRoleId, companyId, hrRoleId)
+6. Получение HrRole (HR или HR_ADMIN) из таблицы hr_roles
+7. Создание RoleContext (userRole: EMPLOYER, companyId, hrRoleId)
    ↓
 7. Генерация токенов
    ↓
@@ -471,7 +459,7 @@ private async generateAccessToken(
   const payload: JwtPayload = {
     sub: user.id,
     roleContextId: roleContext.id,
-    userRoleName: userRole.name, // Название системной роли из user_roles
+    userRoleName: roleContext.userRole, // Enum значение (UserRoleName)
     companyId: roleContext.companyId, // null для CANDIDATE, обязателен для EMPLOYER
     hrRoleName: hrRole?.name || null, // Название HR роли из hr_roles (только для EMPLOYER)
   };
@@ -587,6 +575,7 @@ GET /auth/activate/:link
 ```typescript
 @Get('activate/:link')
 @Public()
+@SetAuthCookie() // Автоматически устанавливает токены в cookies после активации
 async activate(@Param('link') link: string) {
   const user = await this.userRepository.findByActivationLink(link);
 
@@ -603,7 +592,18 @@ async activate(@Param('link') link: string) {
     activationLink: null, // Очищаем ссылку
   });
 
-  return { message: 'Email activated successfully' };
+  // Генерируем токены после активации
+  const { accessToken, refreshToken } = await this.generateTokens(user);
+  await this.saveRefreshToken(user.id, refreshToken);
+
+  return {
+    tokens: {
+      accessToken,
+      refreshToken,
+    },
+    message: 'Email activated successfully',
+  };
+  // AuthCookieInterceptor автоматически установит токены в cookies
 }
 ```
 
@@ -617,7 +617,7 @@ async activate(@Param('link') link: string) {
 this.eventBus.emit(AppEvent.USER_CREATED, {
   userId: user.id,
   email: user.email,
-  userRoleName: roleContext.userRole.name,
+    userRoleName: roleContext.userRole, // Enum значение (UserRoleName)
   activationLink: `${baseUrl}/auth/activate/${user.activationLink}`,
 });
 ```
@@ -652,7 +652,7 @@ describe('AuthService - registerCandidate', () => {
     expect(user.isActivated).toBe(false);
 
     const roleContext = await roleContextRepository.findByUserId(user.id);
-    expect(roleContext.userRole.name).toBe(UserRoleName.CANDIDATE);
+    expect(roleContext.userRole).toBe(UserRole.CANDIDATE);
   });
 
   it('should throw ConflictException if email exists', async () => {

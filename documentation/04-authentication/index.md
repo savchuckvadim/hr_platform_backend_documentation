@@ -16,10 +16,10 @@
 **Файл**: [database-models.md](./database-models.md)
 **Описание**: Модели БД для аутентификации (User, RoleContext, Company, Token)
 
-### ✅ Passport Strategies
+### ✅ Token Validation
 **Статус**: Завершено
 **Файл**: [passport-strategies.md](./passport-strategies.md)
-**Описание**: JWT и Refresh стратегии Passport
+**Описание**: Валидация токенов через AccessTokenGuard и TokenService, работа с HttpOnly cookies
 
 ### ✅ Guards и Decorators
 **Статус**: Завершено
@@ -65,6 +65,9 @@
 - **Sliding session**: Access token продлевается при любой активности
 - **Stateful refresh**: Refresh токены хранятся в БД в хэшированном виде
 - **Stateless access**: Access токены - JWT без хранения в БД
+- **HttpOnly cookies**: Токены хранятся в HttpOnly cookies для безопасности
+- **CookieService**: Управление токенами через CookieService (установка, получение, очистка)
+- **AuthCookieInterceptor**: Автоматическая установка токенов в cookies
 
 ## Структура модуля
 
@@ -90,19 +93,28 @@ auth/
 │   └── interfaces/
 │       └── jwt-payload.interface.ts
 ├── infrastructure/
-│   ├── strategies/
-│   │   ├── jwt.strategy.ts
-│   │   └── refresh.strategy.ts
 │   ├── guards/
-│   │   ├── jwt-auth.guard.ts
-│   │   ├── refresh-auth.guard.ts
-│   │   └── roles.guard.ts
+│   │   ├── roles.guard.ts
+│   │   └── hr-roles.guard.ts
 │   ├── decorators/
-│   │   ├── current-user.decorator.ts
-│   │   ├── current-role.decorator.ts
-│   │   └── roles.decorator.ts
-│   ├── interceptors/
-│   │   └── token-refresh.interceptor.ts
+│   │   ├── roles.decorator.ts
+│   │   └── employer-roles.decorator.ts
+│   └── repositories/
+│       └── password-reset-token.repository.ts
+├── core/
+│   ├── guards/
+│   │   └── access-token.guard.ts
+│   ├── decorators/
+│   │   ├── auth/
+│   │   │   ├── current-user.decorator.ts
+│   │   │   ├── current-role.decorator.ts
+│   │   │   ├── current-company.decorator.ts
+│   │   │   └── set-auth-cookie.decorator.ts
+│   │   └── public.decorator.ts
+│   ├── cookie/
+│   │   └── cookie.service.ts
+│   └── interceptors/
+│       └── auth-cookie.interceptor.ts
 │   ├── repositories/
 │   │   └── password-reset-token.repository.ts
 │   └── cron/
@@ -118,7 +130,7 @@ auth/
 
 - [Концепция аутентификации](./concept.md) - основные принципы и архитектура
 - [Модели БД](./database-models.md) - структура базы данных
-- [Passport стратегии](./passport-strategies.md) - JWT и Refresh стратегии
+- [Валидация токенов](./passport-strategies.md) - AccessTokenGuard, TokenService, работа с cookies
 - [Guards и Decorators](./guards-decorators.md) - защита маршрутов
 - [Employer Roles Guard](./hr-roles-guard.md) - проверка прав работодателей (HR vs HR_ADMIN)
 - [Потоки регистрации](./registration-flow.md) - регистрация кандидата, работодателя и HR

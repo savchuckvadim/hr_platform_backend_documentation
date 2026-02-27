@@ -24,25 +24,9 @@ Table users {
   }
 }
 
-Table user_roles {
-  id varchar [primary key, note: 'UUID']
-  name varchar(50) [unique, not null, note: 'CANDIDATE | EMPLOYER | ADMIN - системные роли']
-  slug varchar(50) [unique, not null]
-  description text [null]
-  is_active boolean [default: true]
-  created_at timestamp [default: `now()`]
-  updated_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id']
-  updated_by varchar [null, note: 'FK to users.id']
-
-  indexes {
-    name
-    slug
-    is_active
-    created_by
-    updated_by
-  }
-}
+// DEPRECATED: user_roles таблица больше не используется
+// Системные роли теперь определяются через enum UserRole в role_contexts
+// Enum: CANDIDATE | EMPLOYER | ADMIN
 
 Table hr_roles {
   id varchar [primary key, note: 'UUID']
@@ -53,33 +37,29 @@ Table hr_roles {
   is_active boolean [default: true]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id']
-  updated_by varchar [null, note: 'FK to users.id']
+  // createdBy/updatedBy не нужны - системная сущность, создается через seed
 
   indexes {
     name
     slug
     is_active
-    created_by
-    updated_by
   }
 }
 
 Table role_contexts {
   id varchar [primary key, note: 'UUID']
   user_id varchar [not null]
-  user_role_id varchar [not null, note: 'FK to user_roles - системная роль (CANDIDATE | EMPLOYER | ADMIN)']
-  company_id varchar [null, note: 'For EMPLOYER role - company they belong to. Required for EMPLOYER roles']
+  user_role varchar [not null, note: 'Enum: CANDIDATE | EMPLOYER | ADMIN - системная роль']
+  company_id varchar [null, note: 'For EMPLOYER role - company they belong to. Nullable в БД, но обязательно для EMPLOYER (валидация на уровне приложения)']
   hr_role_id varchar [null, note: 'FK to hr_roles - роль HR внутри компании (HR | HR_ADMIN) - только для EMPLOYER']
   created_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id - who created this role context']
+  // createdBy не нужен - системная сущность, создается автоматически при регистрации
 
   indexes {
     user_id
-    user_role_id
+    user_role
     company_id
     hr_role_id
-    created_by
   }
 }
 
@@ -91,15 +71,11 @@ Table company_types {
   is_active boolean [default: true]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id']
-  updated_by varchar [null, note: 'FK to users.id']
+  // createdBy/updatedBy не нужны - системная сущность, создается через seed
 
   indexes {
     name
     slug
-    is_active
-    created_by
-    updated_by
   }
 }
 
@@ -165,13 +141,10 @@ Table candidate_profiles {
   location varchar(255) [null]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id - who created this profile']
-  updated_by varchar [null, note: 'FK to users.id - who last updated this profile']
+  // createdBy/updatedBy не нужны - обычно создается самим пользователем
 
   indexes {
     user_id
-    created_by
-    updated_by
   }
 }
 
@@ -217,12 +190,11 @@ Table resume_versions {
   version integer [default: 1]
   data json [note: 'JSON snapshot of resume at version']
   created_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id - who created this version']
+  // createdBy не нужен - версионирование, можно определить по resume.candidateId
 
   indexes {
     resume_id
     (resume_id, version) [unique]
-    created_by
   }
 }
 
@@ -239,16 +211,13 @@ Table experiences {
   location varchar(255) [null]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id - who created this experience']
-  updated_by varchar [null, note: 'FK to users.id - who last updated this experience']
+  // createdBy/updatedBy не нужны - часть резюме, обычно создается самим пользователем
 
   indexes {
     resume_id
     company
     company_id
     position
-    created_by
-    updated_by
   }
 }
 
@@ -263,15 +232,12 @@ Table educations {
   description text [null]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id - who created this education']
-  updated_by varchar [null, note: 'FK to users.id - who last updated this education']
+  // createdBy/updatedBy не нужны - часть резюме, обычно создается самим пользователем
 
   indexes {
     resume_id
     institution
     degree
-    created_by
-    updated_by
   }
 }
 
@@ -358,7 +324,7 @@ Table replies {
     created_at
     created_by
     updated_by
-    (candidate_id, vacancy_id) [unique]
+    (candidate_id, vacancy_id) [unique, note: 'One reply per candidate per vacancy']
   }
 }
 
@@ -374,15 +340,12 @@ Table skills {
   description text [null]
   created_at timestamp [default: `now()`]
   updated_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id']
-  updated_by varchar [null, note: 'FK to users.id']
+  // createdBy/updatedBy не нужны - может быть системная или пользовательская, но не критично для аудита
 
   indexes {
     name
     slug
     category
-    created_by
-    updated_by
   }
 }
 
@@ -392,12 +355,11 @@ Table resume_skills {
   skill_id varchar [not null]
   level varchar [null, note: 'BASIC | INTERMEDIATE | ADVANCED | EXPERT']
   created_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id']
+  // createdBy не нужен - связь many-to-many, не критично для аудита
 
   indexes {
     resume_id
     skill_id
-    created_by
     (resume_id, skill_id) [unique]
   }
 }
@@ -409,12 +371,11 @@ Table vacancy_skills {
   is_required boolean [default: false]
   level varchar [null, note: 'BASIC | INTERMEDIATE | ADVANCED | EXPERT']
   created_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id']
+  // createdBy не нужен - связь many-to-many, не критично для аудита
 
   indexes {
     vacancy_id
     skill_id
-    created_by
     (vacancy_id, skill_id) [unique]
   }
 }
@@ -495,13 +456,12 @@ Table files {
   s3_key varchar(500) [not null]
   type varchar [not null, note: 'RESUME | DOCUMENT | AVATAR | IMAGE | VACANCY_IMAGE']
   created_at timestamp [default: `now()`]
-  created_by varchar [null, note: 'FK to users.id - who uploaded this file']
+  // createdBy не нужен - можно определить по userId
 
   indexes {
     user_id
     type
     created_at
-    created_by
   }
 }
 
@@ -512,7 +472,7 @@ Table files {
 
 // User relationships
 Ref: role_contexts.user_id > users.id [delete: cascade]
-Ref: role_contexts.user_role_id > user_roles.id [delete: restrict]
+// user_role теперь enum, не FK
 Ref: role_contexts.hr_role_id > hr_roles.id [delete: set null]
 Ref: tokens.user_id > users.id [delete: cascade]
 Ref: tokens.role_context_id > role_contexts.id [delete: cascade]
@@ -524,52 +484,33 @@ Ref: files.user_id > users.id [delete: cascade]
 Ref: replies.candidate_id > users.id [delete: cascade]
 // Note: ReplyCandidate relation
 
-// Self-referencing for created_by/updated_by
+// Self-referencing for created_by/updated_by (только в моделях где это критично)
 Ref: users.created_by > users.id [delete: set null]
 Ref: users.updated_by > users.id [delete: set null]
-Ref: user_roles.created_by > users.id [delete: set null]
-Ref: user_roles.updated_by > users.id [delete: set null]
-Ref: hr_roles.created_by > users.id [delete: set null]
-Ref: hr_roles.updated_by > users.id [delete: set null]
-Ref: role_contexts.created_by > users.id [delete: set null]
-Ref: company_types.created_by > users.id [delete: set null]
-Ref: company_types.updated_by > users.id [delete: set null]
 Ref: companies.created_by > users.id [delete: set null]
 Ref: companies.updated_by > users.id [delete: set null]
-Ref: candidate_profiles.created_by > users.id [delete: set null]
-Ref: candidate_profiles.updated_by > users.id [delete: set null]
-Ref: resumes.created_by > users.id [delete: set null]
-Ref: resumes.updated_by > users.id [delete: set null]
-Ref: resume_versions.created_by > users.id [delete: set null]
-Ref: experiences.created_by > users.id [delete: set null]
-Ref: experiences.updated_by > users.id [delete: set null]
-Ref: experiences.company_id > companies.id [delete: set null]
-Ref: educations.created_by > users.id [delete: set null]
-Ref: educations.updated_by > users.id [delete: set null]
 Ref: projects.created_by > users.id [delete: set null]
 Ref: projects.updated_by > users.id [delete: set null]
+Ref: resumes.created_by > users.id [delete: set null]
+Ref: resumes.updated_by > users.id [delete: set null]
 Ref: vacancies.created_by > users.id [delete: set null]
 Ref: vacancies.updated_by > users.id [delete: set null]
 Ref: replies.created_by > users.id [delete: set null]
 Ref: replies.updated_by > users.id [delete: set null]
-Ref: skills.created_by > users.id [delete: set null]
-Ref: skills.updated_by > users.id [delete: set null]
-Ref: resume_skills.created_by > users.id [delete: set null]
-Ref: vacancy_skills.created_by > users.id [delete: set null]
 Ref: chats.created_by > users.id [delete: set null]
 Ref: chats.updated_by > users.id [delete: set null]
 Ref: messages.created_by > users.id [delete: set null]
 Ref: messages.updated_by > users.id [delete: set null]
-Ref: files.created_by > users.id [delete: set null]
+// Примечание: createdBy/updatedBy убраны из технических и системных сущностей (Token, HrRole, RoleContext, CompanyType, CandidateProfile, Experience, Education, Skill, ResumeSkill, VacancySkill, ResumeVersion, File)
 
 // Company relationships
 Ref: companies.owner_id > users.id [delete: cascade]
 // Note: Нельзя удалить тип компании если есть компании этого типа
 Ref: companies.company_type_id > company_types.id [delete: restrict]
-Ref: role_contexts.company_id > companies.id [delete: set null]
+Ref: role_contexts.company_id > companies.id [delete: cascade, note: 'Cascade для предотвращения висячих EMPLOYER ролей']
 
 // Profile relationships
-Ref: resumes.candidate_id > candidate_profiles.id [delete: cascade]
+Ref: resumes.candidate_id > users.id [delete: cascade, note: 'User ID - ссылка на пользователя (кандидата)']
 
 // Resume relationships
 Ref: resume_versions.resume_id > resumes.id [delete: cascade]

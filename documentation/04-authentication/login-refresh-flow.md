@@ -39,6 +39,7 @@ export class LoginDto {
 ```typescript
 @Post('login')
 @Public()
+@SetAuthCookie() // Автоматически устанавливает токены в cookies
 async login(@Body() dto: LoginDto, @Req() request: Request) {
   return this.authService.login(dto, request);
 }
@@ -87,21 +88,26 @@ if (roleContexts.length === 1) {
 } else {
   // Несколько ролей - требуется выбор
   if (!dto.roleContextId) {
-    import { UserRoleName } from '@auth/enums/user-role-name.enum';
+    import { UserRole } from '@auth/enums/user-role.enum';
     import { HrRoleName } from '@auth/enums/hr-role-name.enum';
 
-    // Загружаем userRole и hrRole для каждого roleContext
+    // userRole теперь enum, не нужно загружать из БД
+    // Загружаем hrRole для каждого roleContext если нужно
     const rolesWithDetails = await Promise.all(
       roleContexts.map(async (rc) => {
-        const userRole = await rc.userRole;
-        const hrRole = rc.hrRoleId ? await rc.hrRole : null;
+        let hrRoleName: string | null = null;
+        if (rc.hrRoleId) {
+          const hrRole = await this.hrRoleRepository.findById(rc.hrRoleId);
+          hrRoleName = hrRole?.name || null;
+        }
+        
         return {
           id: rc.id,
-          userRoleName: userRole.name, // Значение из БД (для предустановленных совпадает с enum)
+          userRoleName: rc.userRole, // Enum значение (UserRole)
           companyId: rc.companyId,
-          hrRoleName: hrRole?.name || null, // Для EMPLOYER ролей (для предустановленных совпадает с enum)
+          hrRoleName, // Название HR роли из таблицы hr_roles
         };
-      }),
+      })
     );
 
     // Возвращаем список ролей для выбора
@@ -164,22 +170,33 @@ await this.saveRefreshToken(
 );
 ```
 
-**Шаг 10: Возврат ответа**
+**Шаг 10: Возврат ответа с токенами**
 
 ```typescript
 return {
-  accessToken,
-  refreshToken, // В production - только в HttpOnly cookie
+  tokens: {
+    accessToken,
+    refreshToken,
+  },
   user: {
     id: user.id,
     email: user.email,
-    userRoleName: roleContext.userRole.name,
+    userRoleName: roleContext.userRole, // Enum значение (UserRole)
     roleContextId: roleContext.id,
     companyId: roleContext.companyId, // null для CANDIDATE, обязателен для EMPLOYER
     hrRoleName: roleContext.hrRole?.name || null, // null для не-EMPLOYER ролей
   },
 };
 ```
+
+**Шаг 11: AuthCookieInterceptor устанавливает токены в cookies**
+
+`AuthCookieInterceptor` автоматически:
+1. Перехватывает response с полем `tokens`
+2. Устанавливает `accessToken` в cookie через `CookieService.setAccessToken()`
+3. Устанавливает `refreshToken` в cookie через `CookieService.setRefreshToken()`
+4. Удаляет поле `tokens` из response body
+5. Клиент получает только данные пользователя, токены в HttpOnly cookies
 
 ### Полная последовательность
 
@@ -206,9 +223,13 @@ return {
    ↓
 11. Генерация токенов
    ↓
-12. Сохранение refresh token
+12. Сохранение refresh token в БД
    ↓
-13. Возврат токенов
+13. Возврат ответа с токенами в поле `tokens`
+   ↓
+14. AuthCookieInterceptor устанавливает токены в HttpOnly cookies
+   ↓
+15. Токены удаляются из response body, клиент получает только данные пользователя
 ```
 
 ### Обработка множественных ролей
@@ -261,86 +282,105 @@ POST /auth/refresh
 **Файл:** `api/dto/refresh.dto.ts`
 
 ```typescript
+// Refresh token извлекается из cookie, DTO не требуется
+// Но можно оставить для обратной совместимости (fallback)
 export class RefreshDto {
   @IsString()
   @IsOptional()
-  refreshToken?: string; // Если не в cookie
+  refreshToken?: string; // Fallback: если не в cookie (не рекомендуется)
 }
 ```
+
+**Примечание:** Refresh token **обязательно** должен быть в HttpOnly cookie. Передача в body не рекомендуется.
 
 ### Поток обновления
 
-**Шаг 1: Валидация refresh token**
+**Шаг 1: Извлечение refresh token из cookie**
 
 ```typescript
 @Post('refresh')
-@UseGuards(RefreshAuthGuard)
 @Public()
-async refresh(
-  @CurrentUser() user: User,
-  @CurrentRole() roleContext: RoleContext,
-  @Req() request: Request,
-) {
-  return this.authService.refreshAccessToken(user, roleContext, request);
+@SetAuthCookie() // Автоматически устанавливает новые токены в cookies
+async refresh(@Req() request: Request, @Res() response: Response) {
+  // Извлекаем refresh token из cookie
+  const refreshToken = this.cookieService.getRefreshToken(request);
+
+  if (!refreshToken) {
+    // Очищаем куки при отсутствии токена
+    this.cookieService.clearAuthCookies(response);
+    throw new UnauthorizedException('Refresh token not found');
+  }
+
+  return this.authService.refreshToken(refreshToken, response);
 }
 ```
 
-RefreshAuthGuard уже проверил:
-- Наличие refresh token
-- Валидность токена в БД
-- Срок действия
-- Hash сравнение
+**Валидация refresh token в AuthService:**
+- Проверка наличия в Token таблице
+- Проверка срока действия (expiresAt)
+- Сравнение hash refresh token
+- Проверка соответствия userId
+- При ошибке - автоматическая очистка cookies
 
-**Шаг 2: Генерация нового access token**
-
-```typescript
-const accessToken = await this.generateAccessToken(user, roleContext);
-```
-
-**Шаг 3: Sliding Session (опционально)**
+**Шаг 2: Генерация новых токенов**
 
 ```typescript
-// Продление refresh token если осталось < 50% времени
-const tokenRecord = request.user.tokenRecord;
-const now = new Date();
-const expiresAt = new Date(tokenRecord.expiresAt);
-const timeLeft = expiresAt.getTime() - now.getTime();
-const totalTime = expiresAt.getTime() - tokenRecord.createdAt.getTime();
+// В AuthService.refreshToken()
+const user = await this.userService.getUser(userData.userId);
+const { accessToken, refreshToken } = await this.generateTokens(user);
 
-if (timeLeft / totalTime < 0.5) {
-  // Продлеваем refresh token
-  const newExpiresAt = new Date();
-  newExpiresAt.setDate(newExpiresAt.getDate() + 7); // +7 дней
-
-  await this.tokenRepository.update(tokenRecord.id, {
-    expiresAt: newExpiresAt,
-  });
-}
+// Обновляем refresh token в БД
+await this.tokenService.removeToken(oldRefreshToken);
+await this.tokenService.saveToken(user.id, refreshToken);
 ```
 
-**Шаг 4: Возврат нового access token**
+**Шаг 3: Возврат ответа с новыми токенами**
 
 ```typescript
 return {
-  accessToken,
-  // refreshToken не возвращается (остаётся в cookie)
+  tokens: {
+    accessToken,
+    refreshToken,
+  },
+  user: {
+    id: user.id,
+    email: user.email,
+    userRoleName: roleContext.userRole, // Enum значение
+    roleContextId: roleContext.id,
+    companyId: roleContext.companyId,
+    hrRoleName: roleContext.hrRole?.name || null,
+  },
 };
 ```
 
-### Полная последовательность
+**Шаг 4: AuthCookieInterceptor устанавливает новые токены в cookies**
+
+`AuthCookieInterceptor` автоматически:
+1. Устанавливает новый `accessToken` в cookie
+2. Устанавливает новый `refreshToken` в cookie
+3. Удаляет поле `tokens` из response body
+4. Клиент получает обновленные токены в HttpOnly cookies
+
+**Примечание:** При ошибке валидации refresh token - куки автоматически очищаются через `CookieService.clearAuthCookies()`.
+
+### Полная последовательность Refresh
 
 ```
 1. POST /auth/refresh
    ↓
-2. RefreshAuthGuard валидирует refresh token
+2. Извлечение refresh token из cookie через CookieService
    ↓
-3. Генерация нового access token
+3. Валидация refresh token в БД (наличие, срок действия, hash)
    ↓
-4. Проверка времени до истечения refresh token
+4. Генерация новых access и refresh токенов
    ↓
-5. Продление refresh token (sliding session)
+5. Обновление refresh token в БД (удаление старого, сохранение нового)
    ↓
-6. Возврат нового access token
+6. Возврат ответа с токенами в поле `tokens`
+   ↓
+7. AuthCookieInterceptor устанавливает новые токены в HttpOnly cookies
+   ↓
+8. Токены удаляются из response body, клиент получает только данные пользователя
 ```
 
 ## Logout Flow
@@ -357,28 +397,31 @@ POST /auth/logout
 
 ```typescript
 @Post('logout')
-@UseGuards(JwtAuthGuard)
+@UseGuards(AccessTokenGuard)
 async logout(
-  @CurrentUser() user: User,
-  @CurrentRole() roleContext: RoleContext,
   @Req() request: Request,
+  @Res() response: Response,
 ) {
-  const deviceId = this.extractDeviceId(request);
+  // Извлекаем refresh token из cookie
+  const refreshToken = this.cookieService.getRefreshToken(request);
 
-  await this.tokenRepository.deleteByUserRoleDevice(
-    user.id,
-    roleContext.id,
-    deviceId,
-  );
+  if (refreshToken) {
+    // Удаляем refresh token из БД
+    await this.authService.logout(refreshToken);
+  }
+
+  // Очищаем куки
+  this.cookieService.clearAuthCookies(response);
 
   return { message: 'Logged out successfully' };
 }
 ```
 
 **Принципы:**
-- Удаляется только токен текущего устройства
+- Refresh token извлекается из cookie
+- Удаляется только токен текущего устройства из БД
+- Куки очищаются через `CookieService.clearAuthCookies()`
 - Другие устройства остаются залогинены
-- Используется deviceId из request или JWT
 
 ### Logout со всех устройств
 
@@ -392,17 +435,25 @@ POST /auth/logout-all
 
 ```typescript
 @Post('logout-all')
-@UseGuards(JwtAuthGuard)
-async logoutAll(@CurrentUser() user: User) {
+@UseGuards(AccessTokenGuard)
+async logoutAll(
+  @CurrentUser() user: User,
+  @Res() response: Response,
+) {
+  // Удаляем все токены пользователя из БД
   await this.tokenRepository.deleteAllByUserId(user.id);
+
+  // Очищаем куки текущего устройства
+  this.cookieService.clearAuthCookies(response);
 
   return { message: 'Logged out from all devices' };
 }
 ```
 
 **Принципы:**
-- Удаляются все токены пользователя
+- Удаляются все токены пользователя из БД
 - Независимо от роли и устройства
+- Куки текущего устройства очищаются
 - Используется для смены пароля, безопасности и т.д.
 
 ## Sliding Session
@@ -524,7 +575,7 @@ POST /auth/login
   "user": {
     "id": "user-id",
     "email": "candidate@example.com",
-    "userRoleName": "CANDIDATE", // Значение из БД (совпадает с UserRoleName.CANDIDATE)
+    "userRoleName": "CANDIDATE", // Значение из БД (совпадает с UserRole.CANDIDATE)
     "roleContextId": "rc-1"
   }
 }
@@ -580,7 +631,7 @@ POST /auth/login
   "user": {
     "id": "user-id",
     "email": "user@example.com",
-    "userRoleName": "EMPLOYER", // Значение из БД (совпадает с UserRoleName.EMPLOYER)
+    "userRoleName": "EMPLOYER", // Значение из БД (совпадает с UserRole.EMPLOYER)
     "roleContextId": "rc-2"
   }
 }

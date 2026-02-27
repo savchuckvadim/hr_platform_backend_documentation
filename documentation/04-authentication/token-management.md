@@ -2,7 +2,49 @@
 
 ## Обзор
 
-Система управления токенами включает автоматическую очистку истёкших токенов, продление сессий и мониторинг активных сессий.
+Система управления токенами включает автоматическую очистку истёкших токенов, продление сессий и мониторинг активных сессий. Токены хранятся в HttpOnly cookies для безопасности.
+
+## CookieService
+
+### Назначение
+
+Сервис для работы с HttpOnly cookies, содержащими access и refresh токены.
+
+**Расположение:** `core/cookie/cookie.service.ts`
+
+**Методы:**
+
+```typescript
+@Injectable()
+export class CookieService {
+  // Установка access token в cookie (15 минут)
+  setAccessToken(res: Response, token: string): void;
+
+  // Установка refresh token в cookie (30 дней)
+  setRefreshToken(res: Response, token: string): void;
+
+  // Очистка обоих токенов из cookies
+  clearAuthCookies(res: Response): void;
+
+  // Извлечение refresh token из cookie
+  getRefreshToken(req: Request): string | undefined;
+
+  // Извлечение access token из cookie
+  getAccessToken(req: Request): string | undefined;
+}
+```
+
+**Настройки cookies:**
+- `httpOnly: true` - защита от XSS
+- `secure: true` - только HTTPS (production)
+- `sameSite: 'none'` - для cross-origin (production)
+- `sameSite: 'lax'` - для localhost (development)
+- `domain` - настраивается через `CLIENT_DOMAIN` (production)
+- `path: '/'` - доступно на всех путях
+
+**Время жизни:**
+- Access token: 15 минут
+- Refresh token: 30 дней
 
 ## Cron очистка истёкших токенов
 
@@ -117,40 +159,39 @@ Refresh token автоматически продлевается при акт�
 ### Реализация в Refresh Flow
 
 ```typescript
-async refreshAccessToken(
-  user: User,
-  roleContext: RoleContext,
-  tokenRecord: Token,
-): Promise<{ accessToken: string }> {
-  // Генерация нового access token
-  const accessToken = await this.generateAccessToken(user, roleContext);
+async refreshToken(refreshToken: string, res?: Response): Promise<AuthenticatedUserDto> {
+  // Валидация refresh token из cookie
+  const userData = await this.tokenService.validateRefreshToken(refreshToken);
 
-  // Проверка времени до истечения refresh token
-  const now = new Date();
-  const expiresAt = new Date(tokenRecord.expiresAt);
-  const createdAt = new Date(tokenRecord.createdAt);
-
-  const timeLeft = expiresAt.getTime() - now.getTime();
-  const totalTime = expiresAt.getTime() - createdAt.getTime();
-  const percentageLeft = timeLeft / totalTime;
-
-  // Если осталось < 50% - продлеваем
-  if (percentageLeft < 0.5) {
-    const newExpiresAt = new Date();
-    newExpiresAt.setDate(newExpiresAt.getDate() + 7); // +7 дней
-
-    await this.tokenRepository.update(tokenRecord.id, {
-      expiresAt: newExpiresAt,
-    });
-
-    this.logger.log(
-      `Refresh token extended for user ${user.id}, device ${tokenRecord.deviceId}`,
-    );
+  // Проверка наличия в БД
+  const tokenFromDb = await this.tokenService.findTokenByRefreshToken(refreshToken);
+  if (!tokenFromDb || !userData?.userId) {
+    if (res) {
+      this.cookieService.clearAuthCookies(res);
+    }
+    throw new UnauthorizedException('Invalid refresh token');
   }
 
-  return { accessToken };
+  // Генерация новых токенов
+  const user = await this.userService.getUser(userData.userId);
+  const { accessToken, refreshToken: newRefreshToken } = await this.generateTokens(user);
+
+  // Обновление refresh token в БД
+  await this.tokenService.removeToken(refreshToken);
+  await this.tokenService.saveToken(user.id, newRefreshToken);
+
+  return {
+    tokens: {
+      accessToken,
+      refreshToken: newRefreshToken,
+    },
+    user,
+  };
+  // AuthCookieInterceptor автоматически установит токены в cookies
 }
 ```
+
+**Примечание:** Sliding session (продление refresh token) может быть реализовано при необходимости, но в текущей реализации refresh token обновляется при каждом refresh запросе.
 
 ### Параметры
 
@@ -182,7 +223,7 @@ GET /auth/sessions
 
 ```typescript
 @Get('sessions')
-@UseGuards(JwtAuthGuard)
+@UseGuards(AccessTokenGuard)
 async getSessions(@CurrentUser() user: User) {
   const tokens = await this.tokenRepository.findByUserId(user.id);
 
@@ -190,7 +231,7 @@ async getSessions(@CurrentUser() user: User) {
     id: token.id,
     deviceId: token.deviceId,
     deviceName: token.deviceName,
-    userRoleName: token.roleContext.userRole.name,
+    userRoleName: token.roleContext.userRole, // Enum значение (UserRole)
     ipAddress: token.ipAddress,
     createdAt: token.createdAt,
     expiresAt: token.expiresAt,
@@ -211,7 +252,7 @@ DELETE /auth/sessions/:sessionId
 
 ```typescript
 @Delete('sessions/:sessionId')
-@UseGuards(JwtAuthGuard)
+@UseGuards(AccessTokenGuard)
 async deleteSession(
   @CurrentUser() user: User,
   @Param('sessionId') sessionId: string,
@@ -230,30 +271,31 @@ async deleteSession(
 
 ## Безопасность
 
-### Хранение refresh token
+### Хранение токенов
 
-**Рекомендации:**
+**Текущая реализация:**
 
-1. **HttpOnly Cookie (предпочтительно)**
-   ```typescript
-   response.cookie('refreshToken', refreshToken, {
-     httpOnly: true,
-     secure: process.env.NODE_ENV === 'production',
-     sameSite: 'strict',
-     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 дней
-   });
-   ```
+1. **Access Token - HttpOnly Cookie (обязательно)**
+   - Устанавливается через `CookieService.setAccessToken()`
+   - Время жизни: 15 минут
+   - Настройки: `httpOnly: true`, `secure: true` (production), `sameSite: 'none'` (production)
 
-2. **Secure Storage (для мобильных)**
-   - iOS: Keychain
-   - Android: Keystore
-   - React Native: SecureStore
+2. **Refresh Token - HttpOnly Cookie (обязательно)**
+   - Устанавливается через `CookieService.setRefreshToken()`
+   - Время жизни: 30 дней
+   - Настройки: `httpOnly: true`, `secure: true` (production), `sameSite: 'none'` (production)
+   - Извлекается через `CookieService.getRefreshToken()`
 
-3. **Никогда не хранить в:**
-   - localStorage
-   - sessionStorage
-   - URL параметрах
-   - Публичных переменных
+3. **Fallback для Access Token:**
+   - Может быть передан в заголовке `Authorization: Bearer <token>`
+   - `AccessTokenGuard` проверяет сначала заголовок, затем cookie
+
+**Никогда не хранить в:**
+- localStorage
+- sessionStorage
+- URL параметрах
+- Публичных переменных
+- Response body (удаляется через `AuthCookieInterceptor`)
 
 ### Хэширование refresh token
 
@@ -289,7 +331,7 @@ async deleteSession(
 // При создании токена
 this.metrics.increment('tokens.created', 1, {
   device: tokenRecord.deviceName || 'unknown',
-    userRoleName: roleContext.userRole.name,
+    userRoleName: roleContext.userRole, // Enum значение
 });
 
 // При удалении токена

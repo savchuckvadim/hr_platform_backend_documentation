@@ -639,17 +639,12 @@ export class PhoneAuthService {
       // Если у пользователя нет ролей, создаём CANDIDATE по умолчанию
       const existingRoles = await this.roleContextRepository.findByUserId(user.id);
       if (existingRoles.length === 0) {
-        import { UserRoleName } from '@auth/enums/user-role-name.enum';
+        import { UserRole } from '@auth/enums/user-role.enum';
 
-        // Получаем роль CANDIDATE из таблицы user_roles (используем enum)
-        const userRole = await this.userRoleRepository.findByName(UserRoleName.CANDIDATE);
-        if (!userRole) {
-          throw new InternalServerErrorException('CANDIDATE role not found. Run seed to create default roles.');
-        }
-
+        // userRole теперь enum, используем напрямую UserRole.CANDIDATE
         roleContext = await this.roleContextRepository.create({
           userId: user.id,
-          userRoleId: userRole.id,
+          userRole: UserRole.CANDIDATE, // Enum значение
           companyId: null,
           hrRoleId: null,
         });
@@ -774,7 +769,7 @@ Response: 200 OK
   "user": {
     "id": "user-id",
     "phone": "+79991234567",
-    "userRoleName": "CANDIDATE", // Значение из БД (совпадает с UserRoleName.CANDIDATE)
+    "userRoleName": "CANDIDATE", // Значение из БД (совпадает с UserRole.CANDIDATE)
     "roleContextId": "rc-1"
   }
 }

@@ -1,279 +1,181 @@
-# Passport Strategies - Стратегии аутентификации
+# Token Validation - Валидация токенов
 
 ## Обзор
 
-Модуль использует NestJS Passport для реализации стратегий аутентификации. Две основные стратегии: JWT (для access token) и Refresh (для refresh token).
+Модуль использует `AccessTokenGuard` и `TokenService` для валидации токенов. Access token проверяется из заголовка Authorization или из cookie.
 
-## JWT Strategy
+## AccessTokenGuard
 
 ### Назначение
 
-Проверяет и валидирует access token на защищённых маршрутах.
+Проверяет и валидирует access token на защищённых маршрутах. Извлекает токен из заголовка Authorization или из cookie.
 
 ### Расположение
 
-`infrastructure/strategies/jwt.strategy.ts`
+`core/guards/access-token.guard.ts`
 
 ### Реализация
 
 ```typescript
-import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { PassportStrategy } from '@nestjs/passport';
-import { ExtractJwt, Strategy } from 'passport-jwt';
-import { ConfigService } from '@nestjs/config';
-import { UserRepository } from '@user/infrastructure/repositories/user.repository';
-import { RoleContextRepository } from '@auth/infrastructure/repositories/role-context.repository';
-
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
-import { HrRoleName } from '@auth/enums/hr-role-name.enum';
-
-export interface JwtPayload {
-  sub: string;              // userId
-  roleContextId: string;    // active role context ID
-  userRoleName: string;     // Название системной роли из user_roles.name (для предустановленных используется UserRoleName enum)
-  companyId: string | null; // ID компании (для EMPLOYER роли - обязательно)
-  hrRoleName: string | null; // Название HR роли из hr_roles.name (для предустановленных используется HrRoleName enum, только для EMPLOYER роли)
-  iat: number;
-  exp: number;
-}
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { Request } from 'express';
+import { TokenPayloadDto, TokenService } from '@/modules/token';
 
 @Injectable()
-export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
+export class AccessTokenGuard implements CanActivate {
   constructor(
-    private readonly configService: ConfigService,
-    private readonly userRepository: UserRepository,
-    private readonly roleContextRepository: RoleContextRepository,
-  ) {
-    super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-      ignoreExpiration: false,
-      secretOrKey: configService.getOrThrow<string>('JWT_SECRET'),
-    });
+    private readonly tokenService: TokenService,
+  ) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const req = context.switchToHttp().getRequest<Request & { user?: TokenPayloadDto }>();
+
+    let accessToken: string | undefined;
+
+    // 1) Берём из заголовка Authorization (приоритет)
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      accessToken = authHeader.split(' ')[1];
+    }
+
+    // 2) Fallback: берём из Cookies
+    if (!accessToken && req.cookies?.accessToken) {
+      accessToken = req.cookies.accessToken;
+    }
+
+    if (!accessToken) {
+      throw new UnauthorizedException('ACCESS_TOKEN_MISSING');
+    }
+
+    // Валидация токена через TokenService
+    const user = await this.tokenService.validateAccessToken(accessToken);
+    req.user = user;
+
+    return true;
   }
+}
+```
 
-  async validate(payload: JwtPayload) {
-    // Проверка существования пользователя
-    const user = await this.userRepository.findById(payload.sub);
-    if (!user) {
-      throw new UnauthorizedException('User not found');
-    }
-
-    // Проверка активации
-    if (!user.isActivated) {
-      throw new UnauthorizedException('User not activated');
-    }
-
-    // Загрузка role context
-    const roleContext = await this.roleContextRepository.findById(
-      payload.roleContextId,
-    );
-    if (!roleContext) {
-      throw new UnauthorizedException('Role context not found');
-    }
-
-    // Загрузка userRole и hrRole
-    const userRole = await roleContext.userRole;
-    if (!userRole) {
-      throw new UnauthorizedException('User role not found');
-    }
-
-    // Проверка соответствия роли
-    if (userRole.name !== payload.userRoleName) {
-      throw new UnauthorizedException('Role mismatch');
-    }
-
-    import { UserRoleName } from '@auth/enums/user-role-name.enum';
-
-    // Проверка companyId для EMPLOYER роли
-    if (userRole.name === UserRoleName.EMPLOYER && !roleContext.companyId) {
-      throw new UnauthorizedException('EMPLOYER role must have companyId');
-    }
-
-    // Проверка соответствия companyId
-    if (payload.companyId && roleContext.companyId !== payload.companyId) {
-      throw new UnauthorizedException('Company mismatch');
-    }
-
-    import { HrRoleName } from '@auth/enums/hr-role-name.enum';
-
-    // Проверка hrRole для EMPLOYER роли
-    let hrRole = null;
-    if (userRole.name === UserRoleName.EMPLOYER && roleContext.hrRoleId) {
-      hrRole = await roleContext.hrRole;
-      if (hrRole && hrRole.name !== payload.hrRoleName) {
-        throw new UnauthorizedException('HR role mismatch');
-      }
-    }
-
-    // Возвращаем данные для request.user
-    return {
-      user,
-      roleContext,
-      userRole,
-      hrRole,
-      companyId: roleContext.companyId,
-      hrRoleName: hrRole?.name || null,
-    };
-  }
+**TokenPayloadDto интерфейс:**
+```typescript
+export interface TokenPayloadDto {
+  userId: string;
+  roleContextId?: string;
+  userRoleName?: string;
+  companyId?: string | null;
+  hrRoleName?: string | null;
 }
 ```
 
 ### Принципы работы
 
 1. **Извлечение токена**
-   - Из заголовка `Authorization: Bearer <token>`
-   - Использует `ExtractJwt.fromAuthHeaderAsBearerToken()`
+   - Приоритет: из заголовка `Authorization: Bearer <token>`
+   - Fallback: из cookie `accessToken` через `req.cookies.accessToken`
 
 2. **Валидация токена**
-   - Проверка подписи через `JWT_SECRET`
+   - Проверка через `TokenService.validateAccessToken()`
+   - Проверка подписи JWT через `JWT_SECRET`
    - Проверка срока действия (exp)
    - Проверка структуры payload
 
-3. **Загрузка данных**
-   - Загрузка User из БД
-   - Загрузка RoleContext из БД
-   - Проверка активации пользователя
-   - Проверка соответствия роли
+3. **Установка данных**
+   - Устанавливает `request.user` с данными из токена (`TokenPayloadDto`)
+   - Доступен через `@CurrentUser()` decorator
 
-4. **Возврат данных**
-   - Возвращает объект `{ user, roleContext }`
-   - Доступен через `@CurrentUser()` и `@CurrentRole()` decorators
+4. **Обработка ошибок**
+   - Бросает `UnauthorizedException` при отсутствии или невалидности токена
 
 ### Использование
 
 ```typescript
 @Controller('protected')
-@UseGuards(JwtAuthGuard)  // Использует JwtStrategy
+@UseGuards(AccessTokenGuard) // Проверяет токен из cookie или header
 export class ProtectedController {
   @Get('profile')
-  getProfile(@CurrentUser() user: User) {
+  getProfile(@CurrentUser() user: TokenPayloadDto) {
     return user;
   }
 }
 ```
 
-## Refresh Strategy
+## Refresh Token Validation
 
 ### Назначение
 
-Валидирует refresh token при обновлении access token.
+Валидирует refresh token при обновлении access token. Refresh token извлекается из HttpOnly cookie через `CookieService`.
 
 ### Расположение
 
-`infrastructure/strategies/refresh.strategy.ts`
+Валидация происходит в `AuthService.refreshToken()` с использованием `TokenService.validateRefreshToken()`.
 
-### Реализация
+### Реализация в AuthService
 
 ```typescript
-import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { PassportStrategy } from '@nestjs/passport';
-import { Strategy } from 'passport-custom';
-import { Request } from 'express';
-import { TokenRepository } from '@auth/infrastructure/repositories/token.repository';
-import { UserRepository } from '@user/infrastructure/repositories/user.repository';
-import { RoleContextRepository } from '@auth/infrastructure/repositories/role-context.repository';
-import * as bcrypt from 'bcrypt';
-
-@Injectable()
-export class RefreshStrategy extends PassportStrategy(Strategy, 'refresh') {
-  constructor(
-    private readonly tokenRepository: TokenRepository,
-    private readonly userRepository: UserRepository,
-    private readonly roleContextRepository: RoleContextRepository,
-  ) {
-    super();
+// В AuthService.refreshToken()
+async refreshToken(refreshToken: string, res?: Response): Promise<AuthenticatedUserDto> {
+  if (!refreshToken) {
+    if (res) {
+      this.cookieService.clearAuthCookies(res);
+    }
+    throw new UnauthorizedException('Refresh token not found');
   }
 
-  async validate(request: Request) {
-    // Извлечение refresh token из cookie или body
-    const refreshToken = this.extractRefreshToken(request);
-    if (!refreshToken) {
-      throw new UnauthorizedException('Refresh token not provided');
-    }
+  // Валидация через TokenService
+  const userData = await this.tokenService.validateRefreshToken(refreshToken);
 
-    // Поиск токена в БД
-    const tokenRecord = await this.tokenRepository.findByRefreshToken(
-      refreshToken,
-    );
-    if (!tokenRecord) {
-      throw new UnauthorizedException('Invalid refresh token');
+  // Проверка наличия в БД
+  const tokenFromDb = await this.tokenService.findTokenByRefreshToken(refreshToken);
+  if (!tokenFromDb || !userData?.userId) {
+    if (res) {
+      this.cookieService.clearAuthCookies(res);
     }
-
-    // Проверка срока действия
-    if (tokenRecord.expiresAt < new Date()) {
-      throw new UnauthorizedException('Refresh token expired');
-    }
-
-    // Сравнение hash
-    const isValid = await bcrypt.compare(
-      refreshToken,
-      tokenRecord.refreshToken,
-    );
-    if (!isValid) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-
-    // Загрузка пользователя
-    const user = await this.userRepository.findById(tokenRecord.userId);
-    if (!user) {
-      throw new UnauthorizedException('User not found');
-    }
-
-    // Проверка активации
-    if (!user.isActivated) {
-      throw new UnauthorizedException('User not activated');
-    }
-
-    // Загрузка role context
-    const roleContext = await this.roleContextRepository.findById(
-      tokenRecord.roleContextId,
-    );
-    if (!roleContext) {
-      throw new UnauthorizedException('Role context not found');
-    }
-
-    // Возвращаем данные
-    return {
-      user,
-      roleContext,
-      tokenRecord,
-    };
+    throw new UnauthorizedException('Invalid refresh token');
   }
 
-  private extractRefreshToken(request: Request): string | null {
-    // Из cookie (предпочтительно)
-    if (request.cookies?.refreshToken) {
-      return request.cookies.refreshToken;
-    }
+  // Генерация новых токенов
+  const user = await this.userService.getUser(userData.userId);
+  const { accessToken, refreshToken: newRefreshToken } = await this.generateTokens(user);
 
-    // Из body (fallback)
-    if (request.body?.refreshToken) {
-      return request.body.refreshToken;
-    }
+  // Обновление refresh token в БД
+  await this.tokenService.removeToken(refreshToken);
+  await this.tokenService.saveToken(user.id, newRefreshToken);
 
-    return null;
-  }
+  return {
+    tokens: {
+      accessToken,
+      refreshToken: newRefreshToken,
+    },
+    user,
+  };
+  // AuthCookieInterceptor автоматически установит токены в cookies
 }
 ```
 
-### Принципы работы
+### Принципы работы Refresh Token
 
 1. **Извлечение токена**
-   - Из HttpOnly cookie (предпочтительно)
-   - Или из body запроса (fallback)
+   - **Обязательно** из HttpOnly cookie через `CookieService.getRefreshToken()`
+   - Передача в body не рекомендуется (fallback для обратной совместимости)
 
-2. **Поиск в БД**
-   - Поиск записи по refresh token (hash lookup)
-   - Проверка существования записи
+2. **Валидация в AuthService**
+   - Валидация через `TokenService.validateRefreshToken()`
+   - Проверка наличия в БД через `TokenService.findTokenByRefreshToken()`
+   - Проверка соответствия userId
+   - При ошибке - автоматическая очистка cookies
 
-3. **Валидация**
-   - Проверка срока действия (expiresAt)
-   - Сравнение hash токена
-   - Проверка активации пользователя
+3. **Генерация новых токенов**
+   - Генерация новых access и refresh токенов
+   - Обновление refresh token в БД (удаление старого, сохранение нового)
 
-4. **Возврат данных**
-   - Возвращает `{ user, roleContext, tokenRecord }`
-   - `tokenRecord` используется для обновления expiresAt (sliding session)
+4. **Установка в cookies**
+   - Новые токены устанавливаются через `AuthCookieInterceptor`
+   - Токены удаляются из response body
 
 ### Использование
 
@@ -281,42 +183,55 @@ export class RefreshStrategy extends PassportStrategy(Strategy, 'refresh') {
 @Controller('auth')
 export class AuthController {
   @Post('refresh')
-  @UseGuards(RefreshAuthGuard)  // Использует RefreshStrategy
-  async refresh(@CurrentUser() user: User, @CurrentRole() role: RoleContext) {
-    // Генерация нового access token
-    return this.authService.refreshAccessToken(user, role);
+  @Public()
+  @SetAuthCookie() // Устанавливает новые токены в cookies
+  async refresh(@Req() request: Request, @Res() response: Response) {
+    // Извлекаем refresh token из cookie
+    const refreshToken = this.cookieService.getRefreshToken(request);
+
+    if (!refreshToken) {
+      this.cookieService.clearAuthCookies(response);
+      throw new UnauthorizedException('Refresh token not found');
+    }
+
+    return this.authService.refreshToken(refreshToken, response);
   }
 }
 ```
 
-## Регистрация стратегий
+## Регистрация модулей
 
 ### В AuthModule
 
 ```typescript
 import { Module } from '@nestjs/common';
-import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { JwtStrategy } from './infrastructure/strategies/jwt.strategy';
-import { RefreshStrategy } from './infrastructure/strategies/refresh.strategy';
+import { AccessTokenGuard } from '@/core/guards/access-token.guard';
+import { TokenService } from '@/modules/token';
+import { CookieService } from '@/core/cookie';
+import { AuthCookieInterceptor } from '@/core/interceptors/auth-cookie.interceptor';
 
 @Module({
   imports: [
-    PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
         secret: configService.getOrThrow<string>('JWT_SECRET'),
         signOptions: {
-          expiresIn: configService.getOrThrow<string>('JWT_EXPIRES_IN'),
+          expiresIn: configService.getOrThrow<string>('JWT_EXPIRES_IN', '15m'),
         },
       }),
       inject: [ConfigService],
     }),
   ],
-  providers: [JwtStrategy, RefreshStrategy],
-  exports: [PassportModule, JwtModule],
+  providers: [
+    AccessTokenGuard,
+    TokenService,
+    CookieService,
+    AuthCookieInterceptor,
+  ],
+  exports: [JwtModule, TokenService, CookieService],
 })
 export class AuthModule {}
 ```
@@ -384,34 +299,34 @@ REFRESH_TOKEN_EXPIRES_IN=7d
 ### Unit тесты
 
 ```typescript
-describe('JwtStrategy', () => {
-  let strategy: JwtStrategy;
-  let userRepository: jest.Mocked<UserRepository>;
-  let roleContextRepository: jest.Mocked<RoleContextRepository>;
+describe('AccessTokenGuard', () => {
+  let guard: AccessTokenGuard;
+  let tokenService: jest.Mocked<TokenService>;
 
   beforeEach(() => {
     // Setup mocks
   });
 
-  it('should validate valid token', async () => {
-    const payload = {
-      sub: 'user-id',
-      roleContextId: 'role-id',
-      userRoleName: UserRoleName.CANDIDATE,
-      companyId: null,
-      hrRoleName: null,
-      iat: Date.now(),
-      exp: Date.now() + 3600,
+  it('should validate valid token from header', async () => {
+    const mockRequest = {
+      headers: {
+        authorization: 'Bearer valid-token',
+      },
+      cookies: {},
+      user: undefined,
     };
 
-    userRepository.findById.mockResolvedValue(mockUser);
-    roleContextRepository.findById.mockResolvedValue({
-      ...mockRoleContext,
-      userRole: { name: UserRoleName.CANDIDATE },
-      hrRole: null,
+    tokenService.validateAccessToken.mockResolvedValue({
+      userId: 'user-id',
+      roleContextId: 'role-id',
+      userRoleName: UserRole.CANDIDATE,
     });
 
-    const result = await strategy.validate(payload);
+    const result = await guard.canActivate({
+      switchToHttp: () => ({
+        getRequest: () => mockRequest,
+      }),
+    } as ExecutionContext);
 
     expect(result).toEqual({
       user: mockUser,
@@ -431,12 +346,14 @@ describe('JwtStrategy', () => {
 
 ## Заключение
 
-Passport стратегии обеспечивают:
+Система валидации токенов обеспечивает:
 
-✅ Валидацию access token через JWT Strategy
-✅ Валидацию refresh token через Refresh Strategy
-✅ Загрузку пользователя и role context
-✅ Проверку активации и прав доступа
+✅ Валидацию access token через `AccessTokenGuard` и `TokenService`
+✅ Извлечение access token из cookie или заголовка Authorization
+✅ Валидацию refresh token через `TokenService.validateRefreshToken()`
+✅ Извлечение refresh token из HttpOnly cookie через `CookieService`
+✅ Автоматическую установку токенов в cookies через `AuthCookieInterceptor`
+✅ Автоматическую очистку cookies при ошибках
 ✅ Безопасную обработку ошибок
 
-Все стратегии интегрированы с Guards для защиты маршрутов.
+Все компоненты интегрированы с Guards и Interceptors для защиты маршрутов и управления токенами.

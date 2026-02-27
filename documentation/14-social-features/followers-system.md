@@ -12,12 +12,12 @@
 model Follow {
   id          String   @id @default(uuid())
   followerId  String   @map("follower_id")  // Кто подписывается
-  followingId String   @map("following_id")  // На кого подписываются (Profile ID)
+  followingId String   @map("following_id")  // User ID (для CANDIDATE) или Company ID (для COMPANY)
   profileType ProfileType @map("profile_type") // CANDIDATE | COMPANY
   createdAt   DateTime @default(now())
 
   follower User @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
-  following // Полиморфная связь (CandidateProfile или Company)
+  following // Полиморфная связь (User для CANDIDATE или Company для COMPANY)
 
   @@unique([followerId, followingId, profileType])
   @@map("follows")

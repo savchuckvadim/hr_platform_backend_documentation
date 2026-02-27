@@ -34,40 +34,25 @@
 - One-to-many с `role_contexts` (один User может иметь несколько ролей)
 - One-to-many с `tokens` (один User может иметь несколько активных сессий)
 - One-to-one с `candidate_profiles` (опционально, если есть роль CANDIDATE)
+- One-to-many с `resumes` (резюме кандидата - ссылается на User.id, не на CandidateProfile.id)
 - One-to-many с `companies` (ownedCompanies - компании, где user = owner)
 
-### UserRole
+### UserRole (Enum)
 
-Системные роли для аутентификации пользователей. Расширяемая таблица для добавления новых ролей.
+Системные роли для аутентификации пользователей. Используется enum для типобезопасности.
 
-**Таблица:** `user_roles`
+**Enum:** `UserRole`
 
-**Поля:**
-- `id` - UUID, primary key
-- `name` - varchar(50), unique, not null - название роли: `CANDIDATE | EMPLOYER | ADMIN`
-- `slug` - varchar(50), unique, not null - slug роли
-- `description` - text, nullable - описание роли
-- `isActive` - boolean, default: true - активна ли роль
-- `createdAt` - timestamp, default: now()
-- `updatedAt` - timestamp, auto-update
-
-**Индексы:**
-- `name` - для поиска по названию
-- `slug` - для поиска по slug
-- `isActive` - для фильтрации активных ролей
-
-**Предустановленные роли:**
-- `CANDIDATE` - соискатель (enum `UserRoleName.CANDIDATE`)
-- `EMPLOYER` - работодатель (enum `UserRoleName.EMPLOYER`)
-- `ADMIN` - администратор системы (enum `UserRoleName.ADMIN`)
+**Значения:**
+- `CANDIDATE` - соискатель
+- `EMPLOYER` - работодатель (владелец компании или HR сотрудник)
+- `ADMIN` - администратор системы
 
 **Принципы:**
-- Расширяемая таблица для системных ролей
-- Позволяет добавлять новые роли без миграции enum
-- Предустановленные роли обязательно создаются через seed данные
-- Для предустановленных ролей используется enum `UserRoleName` для типобезопасности
-- Новые роли можно добавлять в БД, но для них enum не требуется
-- Связана с `role_contexts` через `user_role_id`
+- Используется enum для системных ролей
+- Три предустановленные роли: CANDIDATE, EMPLOYER, ADMIN
+- Enum обеспечивает типобезопасность на уровне БД и приложения
+- Роли используются напрямую в RoleContext без промежуточной таблицы
 
 ### HrRole
 
@@ -109,36 +94,37 @@
 **Поля:**
 - `id` - UUID, primary key
 - `userId` - varchar, not null, foreign key → users.id
-- `userRoleId` - varchar, not null, foreign key → user_roles.id - системная роль (CANDIDATE | EMPLOYER | ADMIN)
-- `companyId` - varchar, nullable, foreign key → companies.id - для EMPLOYER роли (обязательно для EMPLOYER)
+- `userRole` - enum UserRole, not null - системная роль (CANDIDATE | EMPLOYER | ADMIN)
+- `companyId` - varchar, nullable, foreign key → companies.id - nullable в БД, но **обязательно для EMPLOYER** (валидация на уровне приложения)
 - `hrRoleId` - varchar, nullable, foreign key → hr_roles.id - роль HR внутри компании (HR | HR_ADMIN) - только для EMPLOYER
 - `createdAt` - timestamp, default: now()
 
 **Индексы:**
 - `userId` - для поиска всех ролей пользователя
-- `userRoleId` - для фильтрации по системной роли
+- `userRole` - для фильтрации по системной роли
 - `companyId` - для поиска EMPLOYER сотрудников компании
 - `hrRoleId` - для фильтрации по HR роли
 
 **Типы ролей:**
 
-1. **CANDIDATE** (userRoleId → user_roles.name = 'CANDIDATE')
+1. **CANDIDATE** (userRole = 'CANDIDATE')
    - Соискатель
    - Создаётся при регистрации как кандидат
    - Связан с `candidate_profiles`
    - `hrRoleId` = null
 
-2. **EMPLOYER** (userRoleId → user_roles.name = 'EMPLOYER')
+2. **EMPLOYER** (userRole = 'EMPLOYER')
    - Работодатель (владелец компании или HR сотрудник)
    - Создаётся при регистрации в существующую компанию или при добавлении HR-ADMIN
-   - Связан с `companies` через `companyId` (обязательно)
+   - Связан с `companies` через `companyId` (обязательно для EMPLOYER, валидация на уровне приложения)
    - Может быть несколько EMPLOYER в одной компании
    - Типы работодателя (hrRoleId → hr_roles):
      - **HR** - обычный HR сотрудник
      - **HR_ADMIN** - HR администратор, может добавлять других HR в компанию
    - Владелец компании регистрируется как EMPLOYER с `hrRoleId: HR_ADMIN`
+   - **Важно:** При удалении Company все связанные RoleContext с EMPLOYER ролью удаляются (Cascade) - это предотвращает "висячие" роли
 
-3. **ADMIN** (userRoleId → user_roles.name = 'ADMIN')
+3. **ADMIN** (userRole = 'ADMIN')
    - Администратор системы
    - Создаётся вручную
    - Полный доступ ко всем ресурсам
@@ -147,16 +133,17 @@
 **Принципы:**
 - Один User может иметь несколько RoleContext
 - В рамках одной сессии активен только один RoleContext
-- `userRoleId` - системная роль (FK к `user_roles`)
+- `userRole` - системная роль (enum UserRole)
+- `companyId` - nullable в БД, но обязательно для EMPLOYER (валидация на уровне приложения)
 - `hrRoleId` - роль HR внутри компании (FK к `hr_roles`) - только для EMPLOYER
 - RoleContext определяет доступ к ресурсам через Guards
 - При удалении User все RoleContext удаляются (cascade)
-- При удалении UserRole удаление RoleContext ограничено (restrict)
+- При удалении Company все связанные RoleContext удаляются (cascade) - предотвращает "висячие" EMPLOYER роли
 - При удалении HrRole RoleContext остается, но `hrRoleId` = null (set null)
 
 **Связи:**
 - Many-to-one с `users` (один User - много RoleContext)
-- Many-to-one с `user_roles` (системная роль)
+- `userRole` - enum UserRole (системная роль)
 - Many-to-one с `hr_roles` (HR роль - только для EMPLOYER)
 - Many-to-one с `companies` (для EMPLOYER роли)
 - One-to-many с `tokens` (один RoleContext - много активных сессий)
@@ -269,6 +256,7 @@ id    userId  roleContextId  deviceId  refreshToken  expiresAt
 User (1) ──< (N) RoleContext
 User (1) ──< (N) Token
 User (1) ──< (1) CandidateProfile (optional)
+User (1) ──< (N) Resume (candidateId ссылается на User.id)
 User (1) ──< (N) Company (ownedCompanies - где user = owner)
 
 Company (1) ──< (N) RoleContext (EMPLOYER roles)
@@ -302,7 +290,7 @@ CREATE TABLE role_contexts (
   id VARCHAR PRIMARY KEY,
   user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   type VARCHAR NOT NULL, -- CANDIDATE | EMPLOYER | ADMIN (глобальный уровень)
-  company_id VARCHAR REFERENCES companies(id) ON DELETE SET NULL,
+  company_id VARCHAR REFERENCES companies(id) ON DELETE CASCADE, -- Cascade для предотвращения "висячих" EMPLOYER ролей
   employer_role_type VARCHAR, -- HR | HR_ADMIN (только для EMPLOYER type, масштабируемо)
   created_at TIMESTAMP DEFAULT NOW()
 );
@@ -370,7 +358,7 @@ CREATE UNIQUE INDEX idx_tokens_user_role_device ON tokens(user_id, role_context_
 1. **Cascade Delete:**
    - При удалении User удаляются все RoleContext и Token
    - При удалении RoleContext удаляются все связанные Token
-   - При удалении Company для EMPLOYER ролей устанавливается companyId = NULL
+   - При удалении Company все связанные RoleContext с EMPLOYER ролью удаляются (Cascade) - это предотвращает "висячие" роли работодателей
 
 2. **Unique Constraints:**
    - `users.email` - уникальный email

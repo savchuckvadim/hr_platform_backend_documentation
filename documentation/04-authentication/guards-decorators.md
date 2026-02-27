@@ -6,21 +6,53 @@ Guards и Decorators обеспечивают защиту маршрутов и
 
 ## Guards
 
-### JwtAuthGuard
+### AccessTokenGuard
 
-Защищает маршруты, требующие валидный access token.
+Защищает маршруты, требующие валидный access token. Проверяет токен из заголовка Authorization или из cookie.
 
-**Расположение:** `infrastructure/guards/jwt-auth.guard.ts`
+**Расположение:** `core/guards/access-token.guard.ts`
 
 **Реализация:**
 ```typescript
-import { Injectable, ExecutionContext } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { Request } from 'express';
+import { TokenPayloadDto, TokenService } from '@/modules/token';
 
 @Injectable()
-export class JwtAuthGuard extends AuthGuard('jwt') {
-  canActivate(context: ExecutionContext) {
-    return super.canActivate(context);
+export class AccessTokenGuard implements CanActivate {
+  constructor(
+    private readonly tokenService: TokenService,
+  ) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const req = context.switchToHttp().getRequest<Request & { user?: TokenPayloadDto }>();
+
+    let accessToken: string | undefined;
+
+    // 1) Берём из заголовка Authorization (приоритет)
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      accessToken = authHeader.split(' ')[1];
+    }
+
+    // 2) Fallback: берём из Cookies
+    if (!accessToken && req.cookies?.accessToken) {
+      accessToken = req.cookies.accessToken;
+    }
+
+    if (!accessToken) {
+      throw new UnauthorizedException('ACCESS_TOKEN_MISSING');
+    }
+
+    const user = await this.tokenService.validateAccessToken(accessToken);
+    req.user = user;
+
+    return true;
   }
 }
 ```
@@ -28,7 +60,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 **Использование:**
 ```typescript
 @Controller('protected')
-@UseGuards(JwtAuthGuard)
+@UseGuards(AccessTokenGuard)
 export class ProtectedController {
   @Get('profile')
   getProfile(@CurrentUser() user: User) {
@@ -38,42 +70,21 @@ export class ProtectedController {
 ```
 
 **Принципы:**
-- Использует JWT Strategy
-- Проверяет валидность access token
-- Загружает user и roleContext в request
-- Бросает UnauthorizedException при ошибке
+- Проверяет access token из заголовка `Authorization: Bearer <token>` (приоритет)
+- Fallback: проверяет access token из cookie `accessToken`
+- Валидирует токен через `TokenService.validateAccessToken()`
+- Устанавливает `request.user` с данными из токена
+- Бросает UnauthorizedException при отсутствии или невалидности токена
 
-### RefreshAuthGuard
+### Refresh Token Flow
 
-Защищает endpoint обновления токена. Использует Refresh Strategy.
-
-**Расположение:** `infrastructure/guards/refresh-auth.guard.ts`
-
-**Реализация:**
-```typescript
-import { Injectable } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
-
-@Injectable()
-export class RefreshAuthGuard extends AuthGuard('refresh') {}
-```
-
-**Использование:**
-```typescript
-@Controller('auth')
-export class AuthController {
-  @Post('refresh')
-  @UseGuards(RefreshAuthGuard)
-  async refresh(@CurrentUser() user: User) {
-    return this.authService.refreshAccessToken(user);
-  }
-}
-```
+Refresh token извлекается из cookie и валидируется в AuthService.
 
 **Принципы:**
-- Используется только на `/auth/refresh`
-- Валидирует refresh token из cookie/body
-- Загружает user, roleContext и tokenRecord
+- Refresh token **обязательно** извлекается из HttpOnly cookie через `CookieService.getRefreshToken()`
+- Валидация происходит в `AuthService.refreshToken()`
+- При ошибке - куки автоматически очищаются через `CookieService.clearAuthCookies()`
+- Не требует отдельного guard, используется `@Public()` на endpoint
 
 ### RolesGuard
 
@@ -103,13 +114,12 @@ export class RolesGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest();
     const roleContext = request.user?.roleContext;
-    const userRole = request.user?.userRole;
 
-    if (!roleContext || !userRole) {
+    if (!roleContext) {
       return false;
     }
 
-    return requiredRoleNames.includes(userRole.name);
+    return requiredRoleNames.includes(roleContext.userRole);
   }
 }
 ```
@@ -117,7 +127,7 @@ export class RolesGuard implements CanActivate {
 **Использование:**
 ```typescript
 @Controller('vacancies')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(AccessTokenGuard, RolesGuard)
 export class VacancyController {
   @Post()
   @Roles('EMPLOYER')
@@ -134,7 +144,7 @@ export class VacancyController {
 
 **Принципы:**
 - Работает вместе с `@Roles()` decorator
-- Проверяет userRole.name из roleContext
+- Проверяет userRole (enum) из roleContext
 - Возвращает true если роль совпадает
 - Возвращает false если роль не совпадает или отсутствует
 
@@ -142,19 +152,21 @@ export class VacancyController {
 
 ### @CurrentUser()
 
-Извлекает User entity из request.
+Извлекает данные пользователя из request. Устанавливается через `AccessTokenGuard`.
 
-**Расположение:** `infrastructure/decorators/current-user.decorator.ts`
+**Расположение:** `core/decorators/auth/current-user.decorator.ts`
 
 **Реализация:**
 ```typescript
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
-import { User } from '@user/domain/entities/user.entity';
+import { TokenPayloadDto } from '@/modules/token';
 
 export const CurrentUser = createParamDecorator(
-  (data: unknown, ctx: ExecutionContext): User => {
+  (data: string | undefined, ctx: ExecutionContext) => {
     const request = ctx.switchToHttp().getRequest();
-    return request.user?.user;
+    const user = request.user; // TokenPayloadDto из AccessTokenGuard
+
+    return data ? user?.[data] : user;
   },
 );
 ```
@@ -162,29 +174,43 @@ export const CurrentUser = createParamDecorator(
 **Использование:**
 ```typescript
 @Get('profile')
-getProfile(@CurrentUser() user: User) {
+@UseGuards(AccessTokenGuard)
+getProfile(@CurrentUser() user: TokenPayloadDto) {
+  // user содержит: userId, roleContextId, userRoleName, companyId, hrRoleName
   return user;
+}
+
+// Или получить конкретное поле
+@Get('profile')
+getProfile(@CurrentUser('userId') userId: string) {
+  return userId;
 }
 ```
 
 ### @CurrentRole()
 
-Извлекает RoleContext entity из request.
+Извлекает RoleContext из request. В текущей реализации `AccessTokenGuard` устанавливает только `TokenPayloadDto` в `request.user`, поэтому для получения полного `RoleContext` с связанными данными (company, hrRole) требуется дополнительная загрузка из БД.
 
-**Расположение:** `infrastructure/decorators/current-role.decorator.ts`
+**Расположение:** `core/decorators/auth/current-role.decorator.ts`
 
 **Реализация:**
 ```typescript
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
-import { RoleContext } from '@auth/domain/entities/role-context.entity';
 
 export const CurrentRole = createParamDecorator(
-  (data: unknown, ctx: ExecutionContext): RoleContext => {
+  (data: unknown, ctx: ExecutionContext) => {
     const request = ctx.switchToHttp().getRequest();
+    // В базовой реализации возвращает только данные из TokenPayloadDto
+    // Для получения полного RoleContext с relations нужно загрузить из БД
     return request.user?.roleContext;
   },
 );
 ```
+
+**Примечание:** 
+- `AccessTokenGuard` устанавливает только `TokenPayloadDto` в `request.user` (userId, roleContextId, userRoleName, companyId, hrRoleName)
+- Для получения полного `RoleContext` entity с связанными данными (company, hrRole) нужно загрузить его из БД по `roleContextId` в сервисе
+- Используйте `@CurrentUser('roleContextId')` для получения ID, затем загрузите полный RoleContext из репозитория
 
 **Использование:**
 ```typescript
@@ -195,8 +221,8 @@ getDashboard(
 ) {
   // Владелец компании работает через EMPLOYER роль
   // Проверка на HR_ADMIN для доступа к управлению компанией
-  const userRole = request.user?.userRole;
-  if (userRole?.name === 'EMPLOYER') {
+  const roleContext = request.user?.roleContext;
+  if (roleContext?.userRole === UserRole.EMPLOYER) {
     // EMPLOYER всегда имеет companyId
     const hrRole = request.user?.hrRole;
     return this.getEmployerDashboard(user, role.companyId, hrRole?.name || null);
@@ -207,42 +233,44 @@ getDashboard(
 
 ### @CurrentCompany()
 
-Извлекает companyId из role context (для EMPLOYER ролей).
+Извлекает companyId из `TokenPayloadDto` (для EMPLOYER ролей).
 
-**Расположение:** `infrastructure/decorators/current-company.decorator.ts`
+**Расположение:** `core/decorators/auth/current-company.decorator.ts`
 
 **Реализация:**
 ```typescript
 import { createParamDecorator, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { UserRole } from '@auth/enums/user-role.enum';
 
 export const CurrentCompany = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): string => {
     const request = ctx.switchToHttp().getRequest();
-    const roleContext = request.user?.roleContext;
+    const user = request.user; // TokenPayloadDto
 
-    if (!roleContext) {
-      throw new ForbiddenException('Role context not found');
+    if (!user) {
+      throw new ForbiddenException('User not found');
     }
 
-    import { UserRoleName } from '@auth/enums/user-role-name.enum';
+    if (user.userRoleName !== UserRole.EMPLOYER) {
+      throw new ForbiddenException('Only EMPLOYER roles have companyId');
+    }
 
-    const userRole = request.user?.userRole;
-    if (userRole?.name === UserRoleName.EMPLOYER && !roleContext.companyId) {
+    if (!user.companyId) {
       throw new ForbiddenException('EMPLOYER role must have companyId');
     }
 
-    return roleContext.companyId;
+    return user.companyId;
   },
 );
 ```
 
 **Использование:**
 ```typescript
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
+import { UserRole } from '@auth/enums/user-role.enum';
 
 @Get('company/vacancies')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRoleName.EMPLOYER)
+@UseGuards(AccessTokenGuard, RolesGuard)
+@Roles(UserRole.EMPLOYER)
 getCompanyVacancies(@CurrentCompany() companyId: string) {
   // companyId автоматически извлекается из role context
   return this.vacancyService.findByCompanyId(companyId);
@@ -261,21 +289,21 @@ import { SetMetadata } from '@nestjs/common';
 import { UserRoleName } from '../enums/user-role-name.enum';
 
 export const ROLES_KEY = 'roles';
-export const Roles = (...roleNames: UserRoleName[]) => SetMetadata(ROLES_KEY, roleNames);
+export const Roles = (...roleNames: UserRole[]) => SetMetadata(ROLES_KEY, roleNames);
 ```
 
 **Использование:**
 ```typescript
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
+import { UserRole } from '@auth/enums/user-role.enum';
 
 @Post('applications')
-@Roles(UserRoleName.CANDIDATE)
+@Roles(UserRole.CANDIDATE)
 createApplication(@CurrentUser() user: User) {
   // Только кандидаты могут создавать отклики
 }
 
 @Get('applications')
-@Roles(UserRoleName.EMPLOYER)
+@Roles(UserRole.EMPLOYER)
 getApplications(@CurrentUser() user: User) {
   // EMPLOYER могут просматривать отклики
 }
@@ -285,14 +313,14 @@ getApplications(@CurrentUser() user: User) {
 
 ### Системные роли (UserRole)
 
-Роли хранятся в таблице `user_roles` для расширяемости. Предустановленные роли определены в enum `UserRoleName`.
+Роли определяются через enum `UserRole` для типобезопасности.
 
 **Enum для предустановленных ролей:**
 
 **Расположение:** `enums/user-role-name.enum.ts`
 
 ```typescript
-export enum UserRoleName {
+export enum UserRole {
   CANDIDATE = 'CANDIDATE',
   EMPLOYER = 'EMPLOYER',
   ADMIN = 'ADMIN',
@@ -305,19 +333,16 @@ export enum UserRoleName {
 - `ADMIN` - администратор системы
 
 **Принципы:**
-- Предустановленные роли обязательно создаются в БД через seed данные
-- Для предустановленных ролей используется enum `UserRoleName` для типобезопасности
-- Новые роли можно добавлять в БД, но для них enum не требуется
+- Роли определяются через enum `UserRole` в БД
+- Enum обеспечивает типобезопасность на уровне БД и приложения
+- Три предустановленные роли: CANDIDATE, EMPLOYER, ADMIN
 
 **Использование:**
 ```typescript
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
-
-// Получение роли из БД (используем enum для предустановленных)
-const userRole = await this.userRoleRepository.findByName(UserRoleName.EMPLOYER);
+import { UserRole } from '@auth/enums/user-role.enum';
 
 // Использование в декораторах (используем enum)
-@Roles(UserRoleName.EMPLOYER) // Типобезопасно, автокомплит работает
+@Roles(UserRole.EMPLOYER) // Типобезопасно, автокомплит работает
 ```
 
 ### HR роли (HrRole)
@@ -391,7 +416,7 @@ throw new UnauthorizedException(AuthStatus.INVALID_PASSWORD);
 
 ```typescript
 @Controller('applications')
-@UseGuards(JwtAuthGuard)
+@UseGuards(AccessTokenGuard) // Проверяет токен из cookie или header
 export class ApplicationController {
   @Get()
   findAll(@CurrentUser() user: User) {
@@ -404,10 +429,10 @@ export class ApplicationController {
 
 ```typescript
 @Controller('vacancies')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(AccessTokenGuard, RolesGuard)
 export class VacancyController {
   @Post()
-  @Roles(UserRoleName.EMPLOYER)
+  @Roles(UserRole.EMPLOYER)
   create(@CurrentUser() user: User, @Body() dto: CreateVacancyDto) {
     // Только EMPLOYER могут создавать вакансии
   }
@@ -423,26 +448,25 @@ export class VacancyController {
 
 ```typescript
 @Controller('dashboard')
-@UseGuards(JwtAuthGuard)
+@UseGuards(AccessTokenGuard)
 export class DashboardController {
   @Get()
   getDashboard(
     @CurrentUser() user: User,
     @CurrentRole() role: RoleContext,
   ) {
-    import { UserRoleName } from '@auth/enums/user-role-name.enum';
+    import { UserRole } from '@auth/enums/user-role.enum';
 
-    const userRole = request.user?.userRole;
-    if (!userRole) {
-      throw new ForbiddenException('User role not found');
+    if (!role) {
+      throw new ForbiddenException('Role context not found');
     }
 
-    switch (userRole.name) {
-      case UserRoleName.CANDIDATE:
+    switch (role.userRole) {
+      case UserRole.CANDIDATE:
         return this.getCandidateDashboard(user);
       // Владелец компании работает через EMPLOYER роль
       // Используем hrRole для проверки прав
-      case UserRoleName.EMPLOYER:
+      case UserRole.EMPLOYER:
         if (!role.companyId) {
           throw new ForbiddenException('EMPLOYER role must have companyId');
         }
@@ -457,19 +481,21 @@ export class DashboardController {
 
 ## Глобальные Guards
 
-### Регистрация глобального JwtAuthGuard
+### Регистрация глобального AccessTokenGuard
 
 ```typescript
 // main.ts или app.module.ts
 import { APP_GUARD } from '@nestjs/core';
-import { JwtAuthGuard } from '@auth/infrastructure/guards/jwt-auth.guard';
+import { AccessTokenGuard } from '@/core/guards/access-token.guard';
+import { Reflector } from '@nestjs/core';
 
 @Module({
   providers: [
     {
       provide: APP_GUARD,
-      useClass: JwtAuthGuard,
+      useClass: AccessTokenGuard,
     },
+    Reflector,
   ],
 })
 export class AppModule {}
@@ -488,16 +514,18 @@ export const IS_PUBLIC_KEY = 'isPublic';
 export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
 ```
 
-**Обновление JwtAuthGuard:**
+**Обновление AccessTokenGuard для поддержки @Public():**
 
 ```typescript
 @Injectable()
-export class JwtAuthGuard extends AuthGuard('jwt') {
-  constructor(private reflector: Reflector) {
-    super();
-  }
+export class AccessTokenGuard implements CanActivate {
+  constructor(
+    private readonly tokenService: TokenService,
+    private readonly reflector: Reflector,
+  ) {}
 
-  canActivate(context: ExecutionContext) {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    // Проверяем @Public() декоратор
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -507,7 +535,9 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       return true;
     }
 
-    return super.canActivate(context);
+    // Обычная проверка токена
+    const req = context.switchToHttp().getRequest<Request & { user?: TokenPayloadDto }>();
+    // ... остальная логика проверки токена
   }
 }
 ```
@@ -519,15 +549,59 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 export class AuthController {
   @Post('register')
   @Public()
+  @SetAuthCookie() // Устанавливает токены в cookies
   register(@Body() dto: RegisterDto) {
     // Публичный endpoint
   }
 
   @Post('login')
   @Public()
+  @SetAuthCookie() // Устанавливает токены в cookies
   login(@Body() dto: LoginDto) {
     // Публичный endpoint
   }
+}
+```
+
+### @SetAuthCookie() Decorator
+
+Автоматически применяет `AuthCookieInterceptor` для установки токенов в HttpOnly cookies.
+
+**Расположение:** `core/decorators/auth/set-auth-cookie.decorator.ts`
+
+**Реализация:**
+```typescript
+import { applyDecorators, UseInterceptors } from '@nestjs/common';
+import { AuthCookieInterceptor } from '@/core/interceptors/auth-cookie.interceptor';
+
+export function SetAuthCookie() {
+  return applyDecorators(
+    UseInterceptors(AuthCookieInterceptor),
+  );
+}
+```
+
+**Принцип работы:**
+1. Endpoint возвращает объект с полем `tokens: { accessToken, refreshToken }`
+2. `AuthCookieInterceptor` перехватывает response
+3. Устанавливает токены в HttpOnly cookies через `CookieService`
+4. Удаляет поле `tokens` из response body
+5. Клиент получает только данные пользователя, токены в cookies
+
+**Использование:**
+```typescript
+@Post('login')
+@Public()
+@SetAuthCookie() // Автоматически устанавливает токены в cookies
+async login(@Body() dto: LoginDto) {
+  return {
+    tokens: {
+      accessToken: '...',
+      refreshToken: '...',
+    },
+    user: { ... },
+  };
+  // Токены автоматически устанавливаются в cookies, удаляются из body
 }
 ```
 
@@ -577,17 +651,17 @@ describe('RolesGuard', () => {
   });
 
   it('should allow access if role matches', () => {
-    reflector.getAllAndOverride = jest.fn().mockReturnValue([UserRoleName.EMPLOYER]);
+    reflector.getAllAndOverride = jest.fn().mockReturnValue([UserRole.EMPLOYER]);
     const context = createMockContext({
-      user: { roleContext: { userRole: { name: UserRoleName.EMPLOYER } } },
+      user: { roleContext: { userRole: UserRole.EMPLOYER } },
     });
     expect(guard.canActivate(context)).toBe(true);
   });
 
   it('should deny access if role does not match', () => {
-    reflector.getAllAndOverride = jest.fn().mockReturnValue([UserRoleName.EMPLOYER]);
+    reflector.getAllAndOverride = jest.fn().mockReturnValue([UserRole.EMPLOYER]);
     const context = createMockContext({
-      user: { roleContext: { userRole: { name: UserRoleName.CANDIDATE } } },
+      user: { roleContext: { userRole: UserRole.CANDIDATE } },
     });
     expect(guard.canActivate(context)).toBe(false);
   });
@@ -598,7 +672,7 @@ describe('RolesGuard', () => {
 
 Guards и Decorators обеспечивают:
 
-✅ Защиту маршрутов через JwtAuthGuard
+✅ Защиту маршрутов через AccessTokenGuard
 ✅ Валидацию refresh token через RefreshAuthGuard
 ✅ Ограничение доступа по ролям через RolesGuard
 ✅ Упрощённый доступ к user и roleContext через decorators

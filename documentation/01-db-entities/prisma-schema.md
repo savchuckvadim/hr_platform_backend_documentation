@@ -37,6 +37,7 @@ model User {
   messages          Message[]
   files             File[]
   sentReplies       Reply[]            @relation("ReplyCandidate")
+  resumes           Resume[]           @relation("ResumeCandidate") // Резюме кандидата
   ownedCompanies    Company[]          // Компании, где user = owner (EMPLOYER с HR_ADMIN)
   // Self-referencing for created_by/updated_by
   createdUsers      User[]             @relation("UserCreatedBy")
@@ -51,13 +52,8 @@ model User {
   @@index([updatedBy])
 }
 
-// DEPRECATED: UserRole больше не используется
-// Роли теперь определяются через RoleContext
-// enum UserRole {
-//   CANDIDATE
-//   EMPLOYER  // Работодатель (владелец компании или HR сотрудник)
-//   ADMIN
-// }
+// DEPRECATED: UserRole таблица больше не используется
+// Роли теперь определяются через enum UserRole в RoleContext
 ```
 
 **Принципы:**
@@ -83,6 +79,7 @@ model Token {
   expiresAt    DateTime @map("expires_at")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  // createdBy/updatedBy не нужны - техническая сущность
 
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   roleContext RoleContext @relation(fields: [roleContextId], references: [id], onDelete: Cascade)
@@ -124,18 +121,13 @@ model CandidateProfile {
   location    String?   @db.VarChar(255)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-  createdBy   String?   @map("created_by")
-  updatedBy   String?   @map("updated_by")
+  // createdBy/updatedBy не нужны - обычно создается самим пользователем
 
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   resumes      Resume[]
-  createdByUser User?   @relation("CandidateProfileCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
-  updatedByUser User?   @relation("CandidateProfileUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("candidate_profiles")
   @@index([userId])
-  @@index([createdBy])
-  @@index([updatedBy])
 }
 ```
 
@@ -145,41 +137,23 @@ model CandidateProfile {
 - В резюме могут быть переопределены контакты
 - `birthday` только в профиле, не в резюме
 
-### 4. UserRole - Системные роли
+### 4. UserRole - Системные роли (Enum)
 
-Системные роли для аутентификации пользователей. Расширяемая таблица для добавления новых ролей.
+Системные роли для аутентификации пользователей. Используется enum для типобезопасности.
 
 ```prisma
-model UserRole {
-  id          String    @id @default(uuid())
-  name        String    @unique @db.VarChar(50) // CANDIDATE | EMPLOYER | ADMIN
-  slug        String    @unique @db.VarChar(50)
-  description String?   @db.Text
-  isActive    Boolean   @default(true) @map("is_active")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  createdBy   String?   @map("created_by")
-  updatedBy   String?   @map("updated_by")
-
-  roleContexts RoleContext[]
-  createdByUser User?   @relation("UserRoleCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
-  updatedByUser User?   @relation("UserRoleUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
-
-  @@map("user_roles")
-  @@index([name])
-  @@index([slug])
-  @@index([isActive])
-  @@index([createdBy])
-  @@index([updatedBy])
+enum UserRole {
+  CANDIDATE  // Соискатель
+  EMPLOYER   // Работодатель (владелец компании или HR сотрудник)
+  ADMIN      // Администратор системы
 }
 ```
 
 **Принципы:**
-- Расширяемая таблица для системных ролей
-- Позволяет добавлять новые роли без миграции enum
-- Предустановленные роли: CANDIDATE, EMPLOYER, ADMIN (обязательно создаются через seed)
-- Для предустановленных ролей используется enum `UserRoleName` для типобезопасности
-- Новые роли можно добавлять в БД, но для них enum не требуется
+- Используется enum для системных ролей
+- Три предустановленные роли: CANDIDATE, EMPLOYER, ADMIN
+- Enum обеспечивает типобезопасность на уровне БД и приложения
+- Роли используются напрямую в RoleContext без промежуточной таблицы
 
 ### 5. HrRole - Роли HR внутри компании
 
@@ -195,19 +169,14 @@ model HrRole {
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-  createdBy   String?   @map("created_by")
-  updatedBy   String?   @map("updated_by")
+  // createdBy/updatedBy не нужны - системная сущность, создается через seed
 
   roleContexts RoleContext[]
-  createdByUser User?   @relation("HrRoleCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
-  updatedByUser User?   @relation("HrRoleUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("hr_roles")
   @@index([name])
   @@index([slug])
   @@index([isActive])
-  @@index([createdBy])
-  @@index([updatedBy])
 }
 ```
 
@@ -225,36 +194,34 @@ model HrRole {
 
 ```prisma
 model RoleContext {
-  id          String    @id @default(uuid())
-  userId      String    @map("user_id")
-  userRoleId  String    @map("user_role_id") // FK к user_roles (CANDIDATE | EMPLOYER | ADMIN)
-  companyId   String?   @map("company_id") // Обязательно для EMPLOYER
-  hrRoleId    String?    @map("hr_role_id") // FK к hr_roles (HR | HR_ADMIN) - только для EMPLOYER
-  createdAt   DateTime  @default(now())
-  createdBy   String?   @map("created_by")
+  id          String       @id @default(uuid())
+  userId      String       @map("user_id")
+  userRole    UserRole // Enum: CANDIDATE | EMPLOYER | ADMIN
+  companyId   String?      @map("company_id") // Nullable в БД, но обязательно для EMPLOYER (валидация на уровне приложения)
+  hrRoleId    String?       @map("hr_role_id") // FK к hr_roles (HR | HR_ADMIN) - только для EMPLOYER
+  createdAt   DateTime      @default(now())
+  // createdBy не нужен - системная сущность, создается автоматически при регистрации
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userRole    UserRole @relation(fields: [userRoleId], references: [id], onDelete: Restrict)
-  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  hrRole      HrRole?  @relation(fields: [hrRoleId], references: [id], onDelete: SetNull)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company     Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  hrRole      HrRole?      @relation(fields: [hrRoleId], references: [id], onDelete: SetNull)
   tokens      Token[]
-  createdByUser User?  @relation("RoleContextCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@map("role_contexts")
   @@index([userId])
-  @@index([userRoleId])
+  @@index([userRole])
   @@index([companyId])
   @@index([hrRoleId])
-  @@index([createdBy])
 }
 ```
 
 **Принципы:**
 - Один User может иметь несколько RoleContext (multi-role)
 - В рамках одной сессии активен только один RoleContext
-- `userRoleId` - системная роль (CANDIDATE, EMPLOYER, ADMIN)
+- `userRole` - системная роль (enum: CANDIDATE, EMPLOYER, ADMIN)
 - `hrRoleId` - роль HR внутри компании (HR, HR_ADMIN) - только для EMPLOYER
-- EMPLOYER роли всегда привязаны к Company через companyId
+- `companyId` - nullable в БД (для CANDIDATE и ADMIN = null), но **обязательно для EMPLOYER** (валидация на уровне приложения)
+- При удалении Company все связанные RoleContext удаляются (Cascade) - это предотвращает "висячие" EMPLOYER роли
 - Владелец компании = EMPLOYER с hrRoleId: HR_ADMIN
 
 ### 7. CompanyType - Тип компании
@@ -270,18 +237,13 @@ model CompanyType {
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-  createdBy   String?   @map("created_by")
-  updatedBy   String?   @map("updated_by")
+  // createdBy/updatedBy не нужны - системная сущность, создается через seed
 
   companies   Company[]
-  createdByUser User?   @relation("CompanyTypeCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
-  updatedByUser User?   @relation("CompanyTypeUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("company_types")
   @@index([name])
   @@index([slug])
-  @@index([createdBy])
-  @@index([updatedBy])
 }
 ```
 
@@ -373,7 +335,7 @@ model Project {
 ```prisma
 model Resume {
   id           String    @id @default(uuid())
-  candidateId  String    @map("candidate_id")
+  candidateId  String    @map("candidate_id") // User ID - ссылка на пользователя (кандидата)
   title        String    @db.VarChar(255)
   position     String?   @db.VarChar(255)
   salaryMin    Int?      @map("salary_min")
@@ -389,7 +351,7 @@ model Resume {
   createdBy    String?   @map("created_by")
   updatedBy    String?   @map("updated_by")
 
-  candidate      CandidateProfile @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  candidate      User            @relation("ResumeCandidate", fields: [candidateId], references: [id], onDelete: Cascade)
   skills         ResumeSkill[]
   experiences    Experience[]
   educations     Education[]
@@ -408,7 +370,8 @@ model Resume {
 ```
 
 **Принципы:**
-- Один кандидат может иметь несколько резюме
+- Один кандидат (User) может иметь несколько резюме
+- `candidateId` ссылается на `User.id` (не на CandidateProfile.id) - более прозрачно для фронтенда
 - `contactEmail` и `contactPhone` опционально переопределяют контакты из профиля
 - `isActive` - активно ли резюме
 - `isPublic` - публично ли резюме для просмотра работодателями
@@ -425,15 +388,13 @@ model ResumeVersion {
   version   Int      @default(1)
   data      Json     // JSON snapshot резюме на момент версии
   createdAt DateTime @default(now())
-  createdBy String?  @map("created_by")
+  // createdBy не нужен - версионирование, можно определить по resume.candidateId
 
   resume        Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
-  createdByUser User?  @relation("ResumeVersionCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@unique([resumeId, version])
   @@map("resume_versions")
   @@index([resumeId])
-  @@index([createdBy])
 }
 ```
 
@@ -460,21 +421,16 @@ model Experience {
   location    String?   @db.VarChar(255)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-  createdBy   String?   @map("created_by")
-  updatedBy   String?   @map("updated_by")
+  // createdBy/updatedBy не нужны - часть резюме, обычно создается самим пользователем
 
   resume  Resume   @relation(fields: [resumeId], references: [id], onDelete: Cascade)
   companyRelation Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  createdByUser   User?    @relation("ExperienceCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
-  updatedByUser   User?    @relation("ExperienceUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("experiences")
   @@index([resumeId])
   @@index([company])
   @@index([companyId])
   @@index([position])
-  @@index([createdBy])
-  @@index([updatedBy])
 }
 ```
 
@@ -499,19 +455,14 @@ model Education {
   description String?   @db.Text
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-  createdBy   String?   @map("created_by")
-  updatedBy   String?   @map("updated_by")
+  // createdBy/updatedBy не нужны - часть резюме, обычно создается самим пользователем
 
   resume       Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
-  createdByUser User? @relation("EducationCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
-  updatedByUser User? @relation("EducationUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("educations")
   @@index([resumeId])
   @@index([institution])
   @@index([degree])
-  @@index([createdBy])
-  @@index([updatedBy])
 }
 ```
 
@@ -656,20 +607,15 @@ model Skill {
   description String?  @db.Text
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  createdBy   String?  @map("created_by")
-  updatedBy   String?  @map("updated_by")
+  // createdBy/updatedBy не нужны - может быть системная или пользовательская, но не критично для аудита
 
   resumeSkills ResumeSkill[]
   vacancySkills VacancySkill[]
-  createdByUser User?  @relation("SkillCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
-  updatedByUser User?  @relation("SkillUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("skills")
   @@index([name])
   @@index([slug])
   @@index([category])
-  @@index([createdBy])
-  @@index([updatedBy])
 }
 ```
 
@@ -690,17 +636,15 @@ model ResumeSkill {
   skillId   String   @map("skill_id")
   level     SkillLevel? @default(BASIC)
   createdAt DateTime @default(now())
-  createdBy String?  @map("created_by")
+  // createdBy не нужен - связь many-to-many, не критично для аудита
 
   resume       Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
   skill        Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
-  createdByUser User? @relation("ResumeSkillCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@unique([resumeId, skillId])
   @@map("resume_skills")
   @@index([resumeId])
   @@index([skillId])
-  @@index([createdBy])
 }
 
 enum SkillLevel {
@@ -728,17 +672,15 @@ model VacancySkill {
   isRequired Boolean @default(false) @map("is_required")
   level     SkillLevel?
   createdAt DateTime @default(now())
-  createdBy String?  @map("created_by")
+  // createdBy не нужен - связь many-to-many, не критично для аудита
 
   vacancy       Vacancy @relation(fields: [vacancyId], references: [id], onDelete: Cascade)
   skill         Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
-  createdByUser User?   @relation("VacancySkillCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@unique([vacancyId, skillId])
   @@map("vacancy_skills")
   @@index([vacancyId])
   @@index([skillId])
-  @@index([createdBy])
 }
 ```
 
@@ -887,17 +829,15 @@ model File {
   s3Key       String    @map("s3_key") @db.VarChar(500)
   type        FileType
   createdAt   DateTime  @default(now())
-  createdBy   String?   @map("created_by")
+  // createdBy не нужен - можно определить по userId
 
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages     Message[]
-  createdByUser User?    @relation("FileCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@map("files")
   @@index([userId])
   @@index([type])
   @@index([createdAt])
-  @@index([createdBy])
 }
 
 enum FileType {

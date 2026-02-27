@@ -45,12 +45,9 @@ async repost(
     let profileId: string;
     let profileType: ProfileType;
 
-    if (roleContext.type === 'CANDIDATE') {
-        const candidateProfile = await this.candidateProfileRepository.findByUserId(userId);
-        if (!candidateProfile) {
-            throw new NotFoundException('Candidate profile not found');
-        }
-        profileId = candidateProfile.id;
+    if (roleContext.userRole === 'CANDIDATE') {
+        // Для кандидата используем userId напрямую
+        profileId = userId;
         profileType = ProfileType.CANDIDATE;
     } else if (roleContext.type === 'EMPLOYER') {
         if (!roleContext.companyId) {

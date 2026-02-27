@@ -122,7 +122,7 @@ followers/
 model Post {
   id            String   @id @default(uuid())
   authorId      String   @map("author_id")      // Кто создал пост (User ID)
-  profileId     String   @map("profile_id")     // На чьей стене (CandidateProfile или Company ID)
+  profileId     String   @map("profile_id")     // User ID (для CANDIDATE) или Company ID (для COMPANY)
   profileType   ProfileType @map("profile_type") // CANDIDATE | COMPANY
   text          String?  @db.Text
   image         String?  @db.VarChar(500)
@@ -133,7 +133,7 @@ model Post {
   deletedAt     DateTime? @map("deleted_at")
 
   author        User     @relation("PostAuthor", fields: [authorId], references: [id])
-  profile       // Полиморфная связь (CandidateProfile или Company)
+  profile       // Полиморфная связь (User для CANDIDATE или Company для COMPANY)
   likes         PostLike[]
   hashtags      PostHashtag[]
   reposts       Post[]   @relation("PostRepost")

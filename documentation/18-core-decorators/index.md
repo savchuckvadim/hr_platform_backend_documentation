@@ -100,7 +100,7 @@ async getDashboard(
     const userRole = role.userRole;
     const hrRole = role.hrRole;
 
-    if (userRole.name === UserRoleName.EMPLOYER) {
+    if (roleContext.userRole === UserRole.EMPLOYER) {
         return this.getEmployerDashboard(user, role.companyId, hrRole?.name);
     }
     return this.getCandidateDashboard(user);
@@ -126,7 +126,7 @@ import {
     ExecutionContext,
     ForbiddenException
 } from '@nestjs/common';
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
+import { UserRole } from '@auth/enums/user-role.enum';
 
 export const CurrentCompany = createParamDecorator(
     (data: unknown, ctx: ExecutionContext): string => {
@@ -138,7 +138,7 @@ export const CurrentCompany = createParamDecorator(
         }
 
         const userRole = request.user?.userRole;
-        if (userRole?.name === UserRoleName.EMPLOYER && !roleContext.companyId) {
+        if (roleContext.userRole === UserRole.EMPLOYER && !roleContext.companyId) {
             throw new ForbiddenException('EMPLOYER role must have companyId');
         }
 
@@ -150,11 +150,11 @@ export const CurrentCompany = createParamDecorator(
 **Использование:**
 ```typescript
 import { CurrentCompany } from '@core/decorators/auth/current-company.decorator';
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
+import { UserRole } from '@auth/enums/user-role.enum';
 
 @Get('company/vacancies')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRoleName.EMPLOYER)
+@Roles(UserRole.EMPLOYER)
 async getCompanyVacancies(@CurrentCompany() companyId: string) {
     // companyId автоматически извлекается из role context
     return this.vacancyService.findByCompanyId(companyId);
@@ -176,21 +176,21 @@ async getCompanyVacancies(@CurrentCompany() companyId: string) {
 ```typescript
 // core/decorators/auth/roles.decorator.ts
 import { SetMetadata } from '@nestjs/common';
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
+import { UserRole } from '@auth/enums/user-role.enum';
 
 export const ROLES_KEY = 'roles';
-export const Roles = (...roleNames: UserRoleName[]) =>
+export const Roles = (...roleNames: UserRole[]) =>
     SetMetadata(ROLES_KEY, roleNames);
 ```
 
 **Использование:**
 ```typescript
 import { Roles } from '@core/decorators/auth/roles.decorator';
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
+import { UserRole } from '@auth/enums/user-role.enum';
 
 @Post('applications')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRoleName.CANDIDATE)
+@Roles(UserRole.CANDIDATE)
 async createApplication(@CurrentUser() user: User) {
     // Только кандидаты могут создавать отклики
     return this.applicationService.create(user.id, dto);
@@ -198,7 +198,7 @@ async createApplication(@CurrentUser() user: User) {
 
 @Get('applications')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRoleName.EMPLOYER)
+@Roles(UserRole.EMPLOYER)
 async getApplications(@CurrentUser() user: User) {
     // EMPLOYER могут просматривать отклики
     return this.applicationService.findByCompany(user.companyId);
@@ -208,7 +208,7 @@ async getApplications(@CurrentUser() user: User) {
 **Особенности:**
 - Используется вместе с `RolesGuard`
 - Принимает массив ролей (можно указать несколько)
-- Типобезопасен через `UserRoleName` enum
+- Типобезопасен через `UserRole` enum
 - Проверяет системную роль (CANDIDATE, EMPLOYER, ADMIN)
 
 **См. также:** [Authentication Module - Guards & Decorators](./04-authentication/guards-decorators.md#roles)
@@ -232,11 +232,11 @@ export const EmployerRoles = (...hrRoleNames: HrRoleName[]) =>
 ```typescript
 import { EmployerRoles } from '@core/decorators/auth/employer-roles.decorator';
 import { HrRoleName } from '@auth/enums/hr-role-name.enum';
-import { UserRoleName } from '@auth/enums/user-role-name.enum';
+import { UserRole } from '@auth/enums/user-role.enum';
 
 @Post('company/hr')
 @UseGuards(JwtAuthGuard, RolesGuard, EmployerRolesGuard)
-@Roles(UserRoleName.EMPLOYER)
+@Roles(UserRole.EMPLOYER)
 @EmployerRoles(HrRoleName.HR_ADMIN)
 async addHrToCompany(
     @CurrentCompany() companyId: string,
@@ -412,7 +412,7 @@ export class FilterDto {
    ```typescript
    @Get('company/vacancies')
    @UseGuards(JwtAuthGuard, RolesGuard)
-   @Roles(UserRoleName.EMPLOYER)
+   @Roles(UserRole.EMPLOYER)
    async getVacancies(
        @CurrentUser() user: User,
        @CurrentCompany() companyId: string,

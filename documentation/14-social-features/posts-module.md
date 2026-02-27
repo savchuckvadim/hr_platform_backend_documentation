@@ -38,7 +38,7 @@ posts/
 model Post {
   id            String      @id @default(uuid())
   authorId      String      @map("author_id")      // User ID - кто создал пост
-  profileId     String      @map("profile_id")     // ID профиля (CandidateProfile.id или Company.id)
+  profileId     String      @map("profile_id")     // User ID (для CANDIDATE) или Company ID (для COMPANY)
   profileType   ProfileType @map("profile_type")   // CANDIDATE | COMPANY
   text          String?     @db.Text
   image         String?     @db.VarChar(500)
@@ -51,8 +51,9 @@ model Post {
   deletedAt     DateTime?   @map("deleted_at")
 
   author        User        @relation("PostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
-  candidateProfile CandidateProfile? @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  company       Company?   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  // Полиморфная связь: для CANDIDATE - User.id, для COMPANY - Company.id
+  profileUser   User?       @relation("PostProfileUser", fields: [profileId], references: [id], onDelete: Cascade)
+  company       Company?    @relation("PostProfileCompany", fields: [profileId], references: [id], onDelete: Cascade)
   likes         PostLike[]
   hashtags      PostHashtag[]
   reposts       Post[]      @relation("PostRepost")
@@ -128,8 +129,8 @@ export class CreatePostDto {
     link?: string;
 
     @ApiProperty({
-        description: 'Profile ID (CandidateProfile ID or Company ID)',
-        example: 'profile-id',
+        description: 'Profile ID (User ID for CANDIDATE or Company ID for COMPANY)',
+        example: 'user-id-or-company-id',
         required: false
     })
     @IsOptional()
@@ -227,8 +228,6 @@ import { AppEvent } from '@core/events/events.types';
 import { S3Service } from '@core/s3';
 import { RoleContextRepository } from '@auth/infrastructure/repositories/role-context.repository';
 import { CompanyRepository } from '@company/infrastructure/repositories/company.repository';
-import { CandidateProfileRepository } from '@candidate/infrastructure/repositories/candidate-profile.repository';
-
 @Injectable()
 export class PostService {
     constructor(
@@ -237,7 +236,6 @@ export class PostService {
         private readonly s3Service: S3Service,
         private readonly roleContextRepository: RoleContextRepository,
         private readonly companyRepository: CompanyRepository,
-        private readonly candidateProfileRepository: CandidateProfileRepository,
     ) {}
 
     /**
@@ -261,12 +259,9 @@ export class PostService {
             // Пост на своей стене - определяем профиль автора
             const roleContext = await this.roleContextRepository.findActiveByUserId(authorId);
 
-            if (roleContext.type === 'CANDIDATE') {
-                const candidateProfile = await this.candidateProfileRepository.findByUserId(authorId);
-                if (!candidateProfile) {
-                    throw new NotFoundException('Candidate profile not found');
-                }
-                profileId = candidateProfile.id;
+            if (roleContext.userRole === 'CANDIDATE') {
+                // Для кандидата используем userId напрямую
+                profileId = authorId;
                 profileType = ProfileType.CANDIDATE;
             } else if (roleContext.type === 'EMPLOYER') {
                 // Для компаний - проверяем, что это HR компании
@@ -312,10 +307,9 @@ export class PostService {
         profileType: ProfileType,
     ): Promise<void> {
         if (profileType === ProfileType.CANDIDATE) {
-            // Для кандидата - можно постить только на своей стене
-            const candidateProfile = await this.candidateProfileRepository.findByUserId(authorId);
-            if (candidateProfile?.id !== profileId) {
-                throw new ForbiddenException('You can only post on your own candidate profile');
+            // Для кандидата - можно постить только на своей стене (userId)
+            if (authorId !== profileId) {
+                throw new ForbiddenException('You can only post on your own profile');
             }
         } else if (profileType === ProfileType.COMPANY) {
             // Для компании - проверяем, что автор является HR этой компании

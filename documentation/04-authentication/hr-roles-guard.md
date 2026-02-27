@@ -15,7 +15,7 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { EMPLOYER_ROLES_KEY } from '../decorators/employer-roles.decorator';
-import { UserRoleName } from '../enums/user-role-name.enum';
+import { UserRole } from '../enums/user-role.enum';
 import { HrRoleName } from '../enums/hr-role-name.enum';
 
 @Injectable()
@@ -42,7 +42,7 @@ export class EmployerRolesGuard implements CanActivate {
     }
 
     // Проверяем что это EMPLOYER роль
-    if (userRole.name !== UserRoleName.EMPLOYER) {
+    if (roleContext.userRole !== UserRole.EMPLOYER) {
       return false;
     }
 
@@ -78,8 +78,8 @@ import { UserRoleName } from '@auth/enums/user-role-name.enum';
 import { HrRoleName } from '@auth/enums/hr-role-name.enum';
 
 @Controller('hr')
-@UseGuards(JwtAuthGuard, RolesGuard, EmployerRolesGuard)
-@Roles(UserRoleName.EMPLOYER) // Только EMPLOYER роли
+@UseGuards(AccessTokenGuard, RolesGuard, EmployerRolesGuard)
+@Roles(UserRole.EMPLOYER) // Только EMPLOYER роли
 export class HrController {
   @Post('register')
   @EmployerRoles(HrRoleName.HR_ADMIN) // Только HR_ADMIN может регистрировать HR
@@ -107,10 +107,10 @@ export class HrController {
 
 ```typescript
 @Controller('auth')
-@UseGuards(JwtAuthGuard, RolesGuard, EmployerRolesGuard)
+@UseGuards(AccessTokenGuard, RolesGuard, EmployerRolesGuard)
 export class AuthController {
   @Post('register/hr')
-  @Roles(UserRoleName.EMPLOYER) // Только EMPLOYER роли
+  @Roles(UserRole.EMPLOYER) // Только EMPLOYER роли
   @EmployerRoles(HrRoleName.HR_ADMIN) // Только HR_ADMIN
   async registerHr(
     @CurrentUser() user: User,
@@ -134,8 +134,8 @@ import { UserRoleName } from '@auth/enums/user-role-name.enum';
 import { HrRoleName } from '@auth/enums/hr-role-name.enum';
 
 @Controller('company/hr')
-@UseGuards(JwtAuthGuard, RolesGuard, EmployerRolesGuard)
-@Roles(UserRoleName.EMPLOYER)
+@UseGuards(AccessTokenGuard, RolesGuard, EmployerRolesGuard)
+@Roles(UserRole.EMPLOYER)
 export class CompanyHrController {
   @Get()
   @EmployerRoles(HrRoleName.HR, HrRoleName.HR_ADMIN)
@@ -178,7 +178,7 @@ export class HrService {
     import { HrRoleName } from '@auth/enums/hr-role-name.enum';
 
     // Проверка что текущий пользователь - HR_ADMIN этой компании
-    if (currentUserRole.name !== UserRoleName.EMPLOYER) {
+    if (currentRole.userRole !== UserRole.EMPLOYER) {
       throw new ForbiddenException('Only EMPLOYER can add HR');
     }
 
@@ -215,7 +215,7 @@ describe('EmployerRolesGuard', () => {
     const context = createMockContext({
       user: {
         roleContext: {
-          userRole: { name: UserRoleName.EMPLOYER },
+          userRole: UserRole.EMPLOYER,
           hrRole: { name: HrRoleName.HR_ADMIN },
         },
       },
@@ -230,7 +230,7 @@ describe('EmployerRolesGuard', () => {
     const context = createMockContext({
       user: {
         roleContext: {
-          userRole: { name: UserRoleName.EMPLOYER },
+          userRole: UserRole.EMPLOYER,
           hrRole: { name: HrRoleName.HR },
         },
       },
